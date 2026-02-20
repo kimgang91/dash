@@ -32,6 +32,8 @@ export default function SalesDashboard() {
   const [showAllDistricts, setShowAllDistricts] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [filters, setFilters] = useState<FilterState>({
     region: '',
     md: '',
@@ -70,6 +72,8 @@ export default function SalesDashboard() {
       }
       if (result.data) {
         setData(result.data);
+        setLastUpdateTime(new Date());
+        setRefreshKey(prev => prev + 1);
         if (showSuccess) {
           console.log(`✅ 데이터 새로고침 완료: ${result.data.length}개 캠핑장 로드됨`);
         }
@@ -249,7 +253,7 @@ export default function SalesDashboard() {
     return Array.from(resultSet).sort();
   }, [data]);
 
-  // AI 분석 함수 (결과, 사유, 내용 요약)
+  // AI 분석 함수 (결과, 사유, 내용 요약) - 더 디테일하게
   const analyzeData = async () => {
     try {
       setAnalyzing(true);
@@ -258,50 +262,100 @@ export default function SalesDashboard() {
       const resultStats: { [key: string]: number } = {};
       const reasons: string[] = [];
       const contents: string[] = [];
+      const mdResultMap: { [md: string]: { [result: string]: number } } = {};
+      const regionResultMap: { [region: string]: { [result: string]: number } } = {};
+      const dateMap: { [date: string]: number } = {};
       
       filteredData.forEach((item) => {
+        // 결과 통계
         if (item['결과']) {
           resultStats[item['결과']] = (resultStats[item['결과']] || 0) + 1;
         }
+        
+        // MD별 결과 통계
+        if (item['컨택MD'] && item['결과']) {
+          if (!mdResultMap[item['컨택MD']]) {
+            mdResultMap[item['컨택MD']] = {};
+          }
+          mdResultMap[item['컨택MD']][item['결과']] = (mdResultMap[item['컨택MD']][item['결과']] || 0) + 1;
+        }
+        
+        // 지역별 결과 통계
+        if (item['지역(광역)'] && item['결과']) {
+          if (!regionResultMap[item['지역(광역)']]) {
+            regionResultMap[item['지역(광역)']] = {};
+          }
+          regionResultMap[item['지역(광역)']][item['결과']] = (regionResultMap[item['지역(광역)']][item['결과']] || 0) + 1;
+        }
+        
+        // 날짜 통계
+        if (item['컨택 최종일']) {
+          dateMap[item['컨택 최종일']] = (dateMap[item['컨택 최종일']] || 0) + 1;
+        }
+        
+        // 사유 수집
         if (item['사유'] && item['사유'].trim()) {
           reasons.push(item['사유'].trim());
         }
+        
+        // 내용 수집
         if (item['내용'] && item['내용'].trim()) {
           contents.push(item['내용'].trim());
         }
       });
 
-      // 결과 요약
+      // 결과 요약 (더 상세)
       const resultSummary = Object.entries(resultStats)
         .sort((a, b) => b[1] - a[1])
         .map(([result, count]) => ({
           result,
           count,
-          percentage: ((count / filteredData.length) * 100).toFixed(1),
+          percentage: filteredData.length > 0 ? ((count / filteredData.length) * 100).toFixed(1) : '0',
+          trend: 'stable', // 추후 개선 가능
         }));
 
-      // 사유 분석 (빈도수 기반)
+      // 사유 분석 (더 상세)
       const reasonMap: { [key: string]: number } = {};
+      const reasonCategories: { [category: string]: number } = {
+        '가격': 0,
+        '조건': 0,
+        '시설': 0,
+        '위치': 0,
+        '기타': 0,
+      };
+      
       reasons.forEach((reason) => {
         reasonMap[reason] = (reasonMap[reason] || 0) + 1;
+        
+        // 카테고리 분류
+        const reasonLower = reason.toLowerCase();
+        if (reasonLower.includes('가격') || reasonLower.includes('비용') || reasonLower.includes('요금')) {
+          reasonCategories['가격']++;
+        } else if (reasonLower.includes('조건') || reasonLower.includes('계약')) {
+          reasonCategories['조건']++;
+        } else if (reasonLower.includes('시설') || reasonLower.includes('환경')) {
+          reasonCategories['시설']++;
+        } else if (reasonLower.includes('위치') || reasonLower.includes('접근')) {
+          reasonCategories['위치']++;
+        } else {
+          reasonCategories['기타']++;
+        }
       });
+      
       const topReasons = Object.entries(reasonMap)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .map(([reason, count]) => ({ reason, count }));
+        .slice(0, 15)
+        .map(([reason, count]) => ({ 
+          reason, 
+          count,
+          percentage: reasons.length > 0 ? ((count / reasons.length) * 100).toFixed(1) : '0',
+        }));
 
-      // 내용 키워드 추출 (간단한 분석)
+      // 내용 키워드 추출 (더 상세)
       const allContents = contents.join(' ');
       const commonPhrases = [
-        '입점',
-        '거절',
-        '검토',
-        '대기',
-        '연락',
-        '협의',
-        '진행',
-        '완료',
-        '보류',
+        '입점', '거절', '검토', '대기', '연락', '협의', '진행', '완료', '보류',
+        '성공', '실패', '재검토', '추가', '변경', '확인', '요청', '승인', '거부',
       ];
       const phraseCounts: { [key: string]: number } = {};
       commonPhrases.forEach((phrase) => {
@@ -312,13 +366,50 @@ export default function SalesDashboard() {
         }
       });
 
+      // MD별 성과 분석
+      const mdPerformance = Object.entries(mdResultMap).map(([md, results]) => {
+        const total = Object.values(results).reduce((sum, count) => sum + count, 0);
+        const newEntry = results['입점(신규)'] || 0;
+        return {
+          md,
+          total,
+          newEntry,
+          rejected: results['거절'] || 0,
+          conversionRate: total > 0 ? ((newEntry / total) * 100).toFixed(1) : '0',
+        };
+      }).sort((a, b) => b.newEntry - a.newEntry);
+
+      // 지역별 성과 분석
+      const regionPerformance = Object.entries(regionResultMap).map(([region, results]) => {
+        const total = Object.values(results).reduce((sum, count) => sum + count, 0);
+        const newEntry = results['입점(신규)'] || 0;
+        return {
+          region,
+          total,
+          newEntry,
+          rejected: results['거절'] || 0,
+          conversionRate: total > 0 ? ((newEntry / total) * 100).toFixed(1) : '0',
+        };
+      }).sort((a, b) => b.newEntry - a.newEntry);
+
+      // 날짜별 트렌드
+      const dateTrend = Object.entries(dateMap)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .slice(-30) // 최근 30일
+        .map(([date, count]) => ({ date, count }));
+
       setAiAnalysis({
         resultSummary,
         topReasons,
+        reasonCategories,
         phraseCounts,
+        mdPerformance: mdPerformance.slice(0, 10),
+        regionPerformance: regionPerformance.slice(0, 10),
+        dateTrend: dateTrend.slice(-7), // 최근 7일
         totalAnalyzed: filteredData.length,
         hasReasons: reasons.length,
         hasContents: contents.length,
+        analysisTime: new Date().toLocaleString('ko-KR'),
       });
     } catch (error) {
       console.error('Analysis error:', error);
@@ -342,25 +433,30 @@ export default function SalesDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-2 sm:p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* 헤더 */}
         <header className="mb-8">
           <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
               고캠핑 DB 영업 현황 대시보드
             </h1>
-            <p className="text-gray-600 text-lg mb-4">MD별 영업 성과 및 성과급 대상자 선정</p>
-            <div className="flex gap-3 flex-wrap">
+            <p className="text-gray-600 text-sm sm:text-base md:text-lg mb-4">MD별 영업 성과 및 성과급 대상자 선정</p>
+            <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
               <button
                 onClick={() => fetchData(true)}
-                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5 font-medium"
+                className="px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5 font-medium text-sm sm:text-base"
               >
                 🔄 데이터 새로고침
               </button>
-              <div className="px-6 py-3 bg-gradient-to-r from-gray-100 to-gray-200 rounded-xl text-sm font-semibold text-gray-700 flex items-center shadow-sm">
+              <div className="px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-gray-100 to-gray-200 rounded-xl text-xs sm:text-sm font-semibold text-gray-700 flex items-center shadow-sm">
                 📊 총 {data.length.toLocaleString()}개 캠핑장
               </div>
+              {lastUpdateTime && (
+                <div className="px-4 sm:px-6 py-2 sm:py-3 bg-gradient-to-r from-green-100 to-emerald-100 rounded-xl text-xs sm:text-sm font-medium text-gray-700 flex items-center shadow-sm">
+                  ⏰ 마지막 업데이트: {lastUpdateTime.toLocaleTimeString('ko-KR')}
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -438,22 +534,22 @@ export default function SalesDashboard() {
         </div>
 
         {/* KPI 카드 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
-            <div className="text-sm font-medium text-blue-100 mb-2">총 캠핑장 수</div>
-            <div className="text-4xl font-bold">{kpis.total.toLocaleString()}</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 md:gap-6 mb-6 sm:mb-8">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-xs sm:text-sm font-medium text-blue-100 mb-1 sm:mb-2">총 캠핑장 수</div>
+            <div className="text-2xl sm:text-3xl md:text-4xl font-bold">{kpis.total.toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
-            <div className="text-sm font-medium text-indigo-100 mb-2">총 컨택 수</div>
-            <div className="text-4xl font-bold">{kpis.contacts.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-xs sm:text-sm font-medium text-indigo-100 mb-1 sm:mb-2">총 컨택 수</div>
+            <div className="text-2xl sm:text-3xl md:text-4xl font-bold">{kpis.contacts.toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
-            <div className="text-sm font-medium text-green-100 mb-2">입점(신규) 수</div>
-            <div className="text-4xl font-bold">{kpis.newEntry.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-xs sm:text-sm font-medium text-green-100 mb-1 sm:mb-2">입점(신규) 수</div>
+            <div className="text-2xl sm:text-3xl md:text-4xl font-bold">{kpis.newEntry.toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
-            <div className="text-sm font-medium text-red-100 mb-2">거절 수</div>
-            <div className="text-4xl font-bold">{kpis.rejected.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-xs sm:text-sm font-medium text-red-100 mb-1 sm:mb-2">거절 수</div>
+            <div className="text-2xl sm:text-3xl md:text-4xl font-bold">{kpis.rejected.toLocaleString()}</div>
           </div>
         </div>
 
@@ -498,25 +594,33 @@ export default function SalesDashboard() {
         </div>
 
         {/* 지역별 현황 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <span className="text-2xl">📍</span> 지역별 캠핑장 현황
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">📍</span> 지역별 캠핑장 현황
           </h2>
-          <div className="h-80 mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4">
+          <div className="h-64 sm:h-80 mb-4 sm:mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-2 sm:p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={regionData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
-                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} stroke="#64748b" />
-                <YAxis stroke="#64748b" />
+                <XAxis 
+                  dataKey="name" 
+                  angle={-45} 
+                  textAnchor="end" 
+                  height={80}
+                  stroke="#64748b"
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
                 <Tooltip 
                   contentStyle={{ 
                     backgroundColor: 'white', 
                     border: '1px solid #e0e7ff',
                     borderRadius: '8px',
-                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+                    fontSize: '12px'
                   }} 
                 />
-                <Legend />
+                <Legend wrapperStyle={{ fontSize: '12px' }} />
                 <Bar dataKey="value" fill="#4f46e5" name="캠핑장 수" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -560,12 +664,12 @@ export default function SalesDashboard() {
         </div>
 
         {/* MD별 컨택 현황 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <span className="text-2xl">👥</span> MD별 컨택 현황
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">👥</span> MD별 컨택 현황
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="h-80">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+            <div className="h-64 sm:h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -574,7 +678,7 @@ export default function SalesDashboard() {
                     cy="50%"
                     labelLine={false}
                     label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={80}
+                    outerRadius={60}
                     fill="#8884d8"
                     dataKey="value"
                   >
@@ -582,7 +686,7 @@ export default function SalesDashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip contentStyle={{ fontSize: '12px' }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -618,20 +722,20 @@ export default function SalesDashboard() {
         </div>
 
         {/* 컨택 결과 분석 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <span className="text-2xl">📈</span> 컨택 결과 분석
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">📈</span> 컨택 결과 분석
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="h-80">
+            <div className="h-64 sm:h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={resultData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
+                    innerRadius={45}
+                    outerRadius={60}
                     paddingAngle={5}
                     dataKey="value"
                   >
@@ -639,8 +743,8 @@ export default function SalesDashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip />
-                  <Legend />
+                  <Tooltip contentStyle={{ fontSize: '12px' }} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -677,9 +781,9 @@ export default function SalesDashboard() {
 
         {/* 거절/미진행 사유 분석 */}
         {rejectionReasons.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-              <span className="text-2xl">⚠️</span> 거절/미진행 사유 분석
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+              <span className="text-xl sm:text-2xl">⚠️</span> 거절/미진행 사유 분석
             </h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -713,9 +817,9 @@ export default function SalesDashboard() {
         )}
 
         {/* MD 성과 순위 테이블 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <span className="text-2xl">🏆</span> MD 성과 순위 (입점 신규 기준)
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">🏆</span> MD 성과 순위 (입점 신규 기준)
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -764,110 +868,186 @@ export default function SalesDashboard() {
           </div>
         </div>
 
-        {/* AI 분석 섹션 */}
+        {/* AI 분석 섹션 - 더 디테일하게 */}
         {aiAnalysis && (
-          <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 rounded-2xl shadow-xl p-6 mb-8 border border-purple-100">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-              <span className="text-2xl">🤖</span> AI 데이터 분석 요약
-            </h2>
+          <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 rounded-2xl shadow-xl p-4 sm:p-6 mb-6 sm:mb-8 border border-purple-100">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <span className="text-xl sm:text-2xl">🤖</span> AI 데이터 분석 요약
+              </h2>
+              {aiAnalysis.analysisTime && (
+                <span className="text-xs sm:text-sm text-gray-500">분석 시간: {aiAnalysis.analysisTime}</span>
+              )}
+            </div>
             {analyzing ? (
               <div className="text-center py-8">
                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600 mx-auto"></div>
                 <p className="mt-4 text-gray-600">분석 중...</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {/* 결과 분석 */}
-                <div className="bg-white rounded-xl p-5 shadow-md">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="text-xl">📊</span> 결과 분석
-                  </h3>
-                  <div className="space-y-3">
-                    {aiAnalysis.resultSummary.slice(0, 5).map((item: any, index: number) => (
-                      <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
-                        <span className="text-sm font-medium text-gray-700">{item.result}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-gray-900">{item.count}건</span>
-                          <span className="text-xs text-gray-500">({item.percentage}%)</span>
+              <div className="space-y-6">
+                {/* 첫 번째 행: 결과 분석, 사유 분석, 키워드 */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                  {/* 결과 분석 */}
+                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                      <span className="text-lg sm:text-xl">📊</span> 결과 분석
+                    </h3>
+                    <div className="space-y-2 sm:space-y-3 max-h-64 overflow-y-auto">
+                      {aiAnalysis.resultSummary.map((item: any, index: number) => (
+                        <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
+                          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate flex-1">{item.result}</span>
+                          <div className="flex items-center gap-1 sm:gap-2 ml-2">
+                            <span className="text-xs sm:text-sm font-semibold text-gray-900">{item.count}건</span>
+                            <span className="text-xs text-gray-500">({item.percentage}%)</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 사유 분석 */}
-                <div className="bg-white rounded-xl p-5 shadow-md">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="text-xl">💬</span> 주요 사유 (TOP 5)
-                  </h3>
-                  <div className="space-y-3">
-                    {aiAnalysis.topReasons.slice(0, 5).map((item: any, index: number) => (
-                      <div key={index} className="p-2 bg-gray-50 rounded-lg">
-                        <div className="text-sm font-medium text-gray-700 mb-1 line-clamp-2">{item.reason}</div>
-                        <div className="text-xs text-gray-500">{item.count}회</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 내용 키워드 분석 */}
-                <div className="bg-white rounded-xl p-5 shadow-md">
-                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="text-xl">🔑</span> 내용 키워드
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(aiAnalysis.phraseCounts)
-                      .sort((a: any, b: any) => b[1] - a[1])
-                      .slice(0, 8)
-                      .map(([phrase, count]: any, index: number) => (
-                        <span
-                          key={index}
-                          className="px-3 py-1 bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700 rounded-full text-xs font-medium"
-                        >
-                          {phrase} ({count})
-                        </span>
                       ))}
+                    </div>
                   </div>
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <div className="text-xs text-gray-600">
-                      <div>분석 대상: {aiAnalysis.totalAnalyzed}개</div>
-                      <div>사유 포함: {aiAnalysis.hasReasons}개</div>
-                      <div>내용 포함: {aiAnalysis.hasContents}개</div>
+
+                  {/* 사유 분석 */}
+                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                      <span className="text-lg sm:text-xl">💬</span> 주요 사유 (TOP 10)
+                    </h3>
+                    <div className="space-y-2 sm:space-y-3 max-h-64 overflow-y-auto">
+                      {aiAnalysis.topReasons.slice(0, 10).map((item: any, index: number) => (
+                        <div key={index} className="p-2 bg-gray-50 rounded-lg">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-bold text-purple-600">#{index + 1}</span>
+                            <div className="text-xs sm:text-sm font-medium text-gray-700 line-clamp-2 flex-1">{item.reason}</div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-500">{item.count}회</span>
+                            <span className="text-xs text-gray-400">({item.percentage}%)</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 내용 키워드 분석 */}
+                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                      <span className="text-lg sm:text-xl">🔑</span> 내용 키워드
+                    </h3>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {Object.entries(aiAnalysis.phraseCounts)
+                        .sort((a: any, b: any) => b[1] - a[1])
+                        .slice(0, 12)
+                        .map(([phrase, count]: any, index: number) => (
+                          <span
+                            key={index}
+                            className="px-2 sm:px-3 py-1 bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700 rounded-full text-xs font-medium"
+                          >
+                            {phrase} ({count})
+                          </span>
+                        ))}
+                    </div>
+                    <div className="pt-3 border-t border-gray-200">
+                      <div className="text-xs text-gray-600 space-y-1">
+                        <div>📊 분석 대상: {aiAnalysis.totalAnalyzed}개</div>
+                        <div>💬 사유 포함: {aiAnalysis.hasReasons}개</div>
+                        <div>📝 내용 포함: {aiAnalysis.hasContents}개</div>
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                {/* 두 번째 행: 사유 카테고리, MD 성과, 지역 성과 */}
+                {aiAnalysis.reasonCategories && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                    {/* 사유 카테고리 분석 */}
+                    <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                        <span className="text-lg sm:text-xl">📂</span> 사유 카테고리
+                      </h3>
+                      <div className="space-y-2">
+                        {Object.entries(aiAnalysis.reasonCategories)
+                          .sort((a: any, b: any) => b[1] - a[1])
+                          .map(([category, count]: any, index: number) => (
+                            <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
+                              <span className="text-xs sm:text-sm font-medium text-gray-700">{category}</span>
+                              <span className="text-xs sm:text-sm font-semibold text-gray-900">{count}건</span>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+
+                    {/* MD 성과 분석 */}
+                    {aiAnalysis.mdPerformance && aiAnalysis.mdPerformance.length > 0 && (
+                      <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                        <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                          <span className="text-lg sm:text-xl">👥</span> MD 성과 분석 (TOP 5)
+                        </h3>
+                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                          {aiAnalysis.mdPerformance.slice(0, 5).map((item: any, index: number) => (
+                            <div key={index} className="p-2 bg-gray-50 rounded-lg">
+                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1">{item.md}</div>
+                              <div className="flex justify-between text-xs text-gray-600">
+                                <span>입점: {item.newEntry}건</span>
+                                <span>전환율: {item.conversionRate}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 지역 성과 분석 */}
+                    {aiAnalysis.regionPerformance && aiAnalysis.regionPerformance.length > 0 && (
+                      <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
+                        <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+                          <span className="text-lg sm:text-xl">📍</span> 지역 성과 분석 (TOP 5)
+                        </h3>
+                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                          {aiAnalysis.regionPerformance.slice(0, 5).map((item: any, index: number) => (
+                            <div key={index} className="p-2 bg-gray-50 rounded-lg">
+                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1">{item.region}</div>
+                              <div className="flex justify-between text-xs text-gray-600">
+                                <span>입점: {item.newEntry}건</span>
+                                <span>전환율: {item.conversionRate}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
 
         {/* 캠핑장 목록 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
-          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <span className="text-2xl">📋</span> 캠핑장 목록 ({filteredData.length.toLocaleString()}개)
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 border border-gray-100">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">📋</span> 캠핑장 목록 ({filteredData.length.toLocaleString()}개)
           </h2>
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs sm:text-sm">
               <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0">
                 <tr>
-                  <th className="px-4 py-3 text-left rounded-tl-lg">번호</th>
-                  <th className="px-4 py-3 text-left">캠핑장명</th>
-                  <th className="px-4 py-3 text-left">지역(광역)</th>
-                  <th className="px-4 py-3 text-left">지역(시/군/리)</th>
-                  <th className="px-4 py-3 text-left">컨택MD</th>
-                  <th className="px-4 py-3 text-left">결과</th>
-                  <th className="px-4 py-3 text-center rounded-tr-lg">상세</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg">번호</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">캠핑장명</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden sm:table-cell">지역(광역)</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden md:table-cell">지역(시/군/리)</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden lg:table-cell">컨택MD</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">결과</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-center rounded-tr-lg">상세</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredData.map((item) => (
                   <tr key={item.id} className="border-b hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-600">{item.id}</td>
-                    <td className="px-4 py-3 font-semibold text-gray-900">{item['캠핑장명'] || '-'}</td>
-                    <td className="px-4 py-3">{item['지역(광역)'] || '-'}</td>
-                    <td className="px-4 py-3">{item['지역(시/군/리)'] || '-'}</td>
-                    <td className="px-4 py-3">{item['컨택MD'] || '-'}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 text-gray-600">{item.id}</td>
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 font-semibold text-gray-900 text-xs sm:text-sm">{item['캠핑장명'] || '-'}</td>
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden sm:table-cell">{item['지역(광역)'] || '-'}</td>
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden md:table-cell">{item['지역(시/군/리)'] || '-'}</td>
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden lg:table-cell">{item['컨택MD'] || '-'}</td>
+                    <td className="px-2 sm:px-4 py-2 sm:py-3">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                         item['결과'] === '입점(신규)' 
                           ? 'bg-green-100 text-green-700' 
@@ -878,10 +1058,10 @@ export default function SalesDashboard() {
                         {item['결과'] || '-'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-2 sm:px-4 py-2 sm:py-3 text-center">
                       <button
                         onClick={() => setSelectedItem(item)}
-                        className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition text-xs font-medium shadow-sm"
+                        className="px-2 sm:px-4 py-1 sm:py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition text-xs font-medium shadow-sm whitespace-nowrap"
                       >
                         상세보기
                       </button>

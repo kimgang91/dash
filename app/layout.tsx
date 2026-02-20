@@ -4,6 +4,8 @@ import './globals.css'
 export const metadata: Metadata = {
   title: '고캠핑 DB 영업 현황 대시보드',
   description: 'MD별 영업 성과 및 성과급 대상자 선정 대시보드',
+  viewport: 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes',
+  themeColor: '#4f46e5',
 }
 
 export default function RootLayout({
