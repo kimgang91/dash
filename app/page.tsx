@@ -53,10 +53,25 @@ export default function SalesDashboard() {
     try {
       setLoading(true);
       setError(null); // 에러 초기화
+      
+      // 디바이스 정보 로깅 (모바일 디버깅용)
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      const userAgent = navigator.userAgent;
+      console.log(`📱 디바이스 정보: ${isMobile ? '모바일' : 'PC'}, User-Agent: ${userAgent}`);
+      console.log(`🌐 네트워크 상태: ${navigator.onLine ? '온라인' : '오프라인'}`);
+      
       // 캐시 방지를 위해 타임스탬프 추가
       const timestamp = new Date().getTime();
-      const response = await fetch(`/api/sales?t=${timestamp}`, {
+      const apiUrl = `/api/sales?t=${timestamp}`;
+      console.log(`🔗 API 호출 시작: ${apiUrl}`);
+      
+      // fetch 타임아웃 설정 (모바일 네트워크 대응)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
+      
+      const response = await fetch(apiUrl, {
         cache: 'no-store',
+        signal: controller.signal,
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           'Pragma': 'no-cache',
@@ -64,31 +79,36 @@ export default function SalesDashboard() {
         },
       });
       
+      clearTimeout(timeoutId);
+      
+      console.log(`📡 API 응답 상태: ${response.status} ${response.statusText}`);
+      
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('API Response Error:', response.status, errorText);
-        throw new Error(`HTTP error! status: ${response.status}`);
+        console.error('❌ API Response Error:', response.status, errorText);
+        throw new Error(`HTTP error! status: ${response.status} - ${errorText.substring(0, 200)}`);
       }
       
       const result = await response.json();
+      console.log(`📦 응답 데이터 타입:`, typeof result, 'has data:', !!result.data, 'is array:', Array.isArray(result.data));
       
       if (result.error) {
         // 상세한 에러 메시지 표시
         let errorMsg = result.error;
-        console.error('API returned error:', errorMsg);
+        console.error('❌ API returned error:', errorMsg);
         setError(errorMsg);
         throw new Error(errorMsg);
       }
       
       if (!result.data) {
-        console.error('No data in response:', result);
-        setError('데이터가 없습니다.');
+        console.error('❌ No data in response:', result);
+        setError('데이터가 없습니다. 서버에서 데이터를 가져오지 못했습니다.');
         setData([]);
         return;
       }
       
       if (Array.isArray(result.data)) {
-        console.log(`📊 데이터 로드 완료: ${result.data.length}개 캠핑장`);
+        console.log(`✅ 데이터 로드 완료: ${result.data.length}개 캠핑장`);
         if (result.data.length > 0) {
           console.log(`📊 샘플 데이터:`, result.data[0]);
           // 컬럼명 확인
@@ -99,6 +119,11 @@ export default function SalesDashboard() {
             '컨택MD': sample['컨택MD'],
             '결과': sample['결과'],
           });
+        } else {
+          console.warn('⚠️ 데이터 배열이 비어있습니다.');
+          setError('데이터가 비어있습니다. Google Sheets에 데이터가 있는지 확인해주세요.');
+          setData([]);
+          return;
         }
         setData(result.data);
         setLastUpdateTime(new Date());
@@ -108,21 +133,30 @@ export default function SalesDashboard() {
           console.log(`✅ 데이터 새로고침 완료: ${result.data.length}개 캠핑장 로드됨`);
         }
       } else {
-        console.error('Invalid data format:', result.data);
-        setError('데이터 형식이 올바르지 않습니다.');
+        console.error('❌ Invalid data format:', typeof result.data, result.data);
+        setError(`데이터 형식이 올바르지 않습니다. (타입: ${typeof result.data})`);
         setData([]);
       }
     } catch (error: any) {
-      console.error('Error fetching data:', error);
+      console.error('❌ Error fetching data:', error);
+      
       // 더 구체적인 에러 메시지 표시
-      const errorMessage = error.message || '데이터를 불러오는 중 오류가 발생했습니다.';
+      let errorMessage = '데이터를 불러오는 중 오류가 발생했습니다.';
+      
+      if (error.name === 'AbortError') {
+        errorMessage = '요청 시간이 초과되었습니다. 네트워크 연결을 확인하고 다시 시도해주세요.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      } else if (error instanceof TypeError && error.message.includes('fetch')) {
+        errorMessage = '네트워크 오류가 발생했습니다. 인터넷 연결을 확인해주세요.';
+      }
+      
       setError(errorMessage);
       setData([]); // 에러 시 빈 배열로 설정
       
       // 에러 메시지에 따라 다른 안내 표시
       if (errorMessage.includes('접근 권한') || errorMessage.includes('403') || errorMessage.includes('공개')) {
-        // 콘솔에만 표시하고 UI에는 에러 메시지 표시
-        console.error('Google Sheets 공개 설정 필요');
+        console.error('⚠️ Google Sheets 공개 설정 필요');
       }
     } finally {
       setLoading(false);
@@ -792,6 +826,9 @@ export default function SalesDashboard() {
   }
 
   if (error) {
+    const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isOnline = typeof window !== 'undefined' && navigator.onLine;
+    
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4 sm:p-8">
         <div className="max-w-4xl mx-auto">
@@ -799,6 +836,17 @@ export default function SalesDashboard() {
             <h1 className="text-2xl sm:text-3xl font-bold text-red-800 mb-4 flex items-center gap-2">
               <span className="text-3xl">⚠️</span> 데이터 로드 오류
             </h1>
+            
+            {/* 디버깅 정보 (모바일용) */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3 sm:p-4 mb-4">
+              <p className="text-xs sm:text-sm text-yellow-800 font-semibold mb-2">디버깅 정보:</p>
+              <div className="text-xs sm:text-sm text-yellow-700 space-y-1">
+                <p>• 디바이스: {isMobile ? '모바일' : 'PC'}</p>
+                <p>• 네트워크: {isOnline ? '온라인 ✅' : '오프라인 ❌'}</p>
+                <p>• 시간: {new Date().toLocaleString('ko-KR')}</p>
+              </div>
+            </div>
+            
             <div className="bg-white rounded-xl p-4 sm:p-6 mb-6">
               <p className="text-base sm:text-lg text-gray-800 mb-4 font-semibold">오류 메시지:</p>
               <p className="text-sm sm:text-base text-gray-700 whitespace-pre-wrap break-words">{error}</p>
