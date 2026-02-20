@@ -44,7 +44,6 @@ export default function SalesDashboard() {
   });
   const [insights, setInsights] = useState<any>(null);
   const [expandedInsight, setExpandedInsight] = useState<string | null>(null); // 확장된 인사이트 키 (전체 요약: 'overall', 사유별: reason명)
-  const [expandedInsight, setExpandedInsight] = useState<string | null>(null); // 확장된 인사이트 키
 
   useEffect(() => {
     fetchData();
