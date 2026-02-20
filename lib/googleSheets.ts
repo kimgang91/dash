@@ -88,33 +88,50 @@ export async function getSalesData() {
     // 처음 10개 행 출력하여 구조 확인
     console.log('=== 시트 구조 확인 ===');
     for (let i = 0; i < Math.min(10, rows.length); i++) {
-      console.log(`Row ${i + 1}:`, rows[i]?.slice(0, 10)); // 처음 10개 컬럼만
+      console.log(`Row ${i + 1}:`, rows[i]?.slice(0, 15)); // 처음 15개 컬럼
     }
 
-    // 헤더 찾기 (더 유연하게)
+    // 헤더 찾기 - 시트 구조에 맞게 수정
+    // 4행이 헤더 (인덱스 3)
     let headerRowIndex = -1;
     
     // 여러 키워드로 헤더 행 찾기
     const headerKeywords = ['캠핑장명', '지역(광역)', '지역(시/군/리)', '컨택MD', '컨택 최종일', '결과', '사유', '내용'];
     
-    for (let i = 0; i < Math.min(10, rows.length); i++) {
-      if (!rows[i] || rows[i].length === 0) continue;
-      
-      const rowText = rows[i].join(' ').toLowerCase();
+    // 먼저 4행(인덱스 3) 확인
+    if (rows[3] && rows[3].length > 0) {
+      const rowText = rows[3].join(' ').toLowerCase();
       let matchCount = 0;
-      
-      // 키워드 매칭 개수 확인
       headerKeywords.forEach(keyword => {
         if (rowText.includes(keyword.toLowerCase())) {
           matchCount++;
         }
       });
-      
-      // 최소 3개 이상의 키워드가 매칭되면 헤더로 간주
       if (matchCount >= 3) {
-        headerRowIndex = i;
-        console.log(`헤더 행 발견: ${i + 1}행 (매칭 키워드: ${matchCount}개)`);
-        break;
+        headerRowIndex = 3;
+        console.log(`헤더 행 발견: 4행 (매칭 키워드: ${matchCount}개)`);
+      }
+    }
+    
+    // 4행이 헤더가 아니면 다른 행 찾기
+    if (headerRowIndex === -1) {
+      for (let i = 0; i < Math.min(10, rows.length); i++) {
+        if (!rows[i] || rows[i].length === 0) continue;
+        
+        const rowText = rows[i].join(' ').toLowerCase();
+        let matchCount = 0;
+        
+        headerKeywords.forEach(keyword => {
+          if (rowText.includes(keyword.toLowerCase())) {
+            matchCount++;
+          }
+        });
+        
+        if (matchCount >= 3) {
+          headerRowIndex = i;
+          console.log(`헤더 행 발견: ${i + 1}행 (매칭 키워드: ${matchCount}개)`);
+          break;
+        }
       }
     }
     
@@ -122,11 +139,8 @@ export async function getSalesData() {
     if (headerRowIndex === -1) {
       for (let i = 0; i < Math.min(10, rows.length); i++) {
         if (rows[i] && rows[i].length > 0) {
-          const rowText = rows[i].join(' ');
-          // 캠핑장명이 어느 열에든 있는지 확인
-          const hasCampingName = rows[i].some(cell => 
-            cell && String(cell).trim().includes('캠핑장명')
-          );
+          // F열(인덱스 5)에 "캠핑장명"이 있는지 확인
+          const hasCampingName = rows[i][5] && String(rows[i][5]).trim().includes('캠핑장명');
           if (hasCampingName) {
             headerRowIndex = i;
             console.log(`헤더 행 발견 (캠핑장명 기준): ${i + 1}행`);
@@ -207,16 +221,17 @@ export async function getSalesData() {
     console.log(`내용: ${contentIndex ?? '없음'}`);
     console.log(`총 컬럼 수: ${headers.length}`);
 
-    // 데이터 처리 - 헤더 다음 행부터 시작
-    // 빈 행을 건너뛰고 실제 데이터가 있는 행부터 시작
+    // 데이터 처리 - 헤더 다음 행부터 시작 (5행부터, 인덱스 4)
+    // 시트 구조: 4행이 헤더, 5행부터 데이터
     let dataStartIndex = headerRowIndex + 1;
     
     // 헤더 다음 몇 개 행을 확인하여 실제 데이터 시작 위치 찾기
-    for (let i = headerRowIndex + 1; i < Math.min(headerRowIndex + 5, rows.length); i++) {
+    for (let i = headerRowIndex + 1; i < Math.min(headerRowIndex + 3, rows.length); i++) {
       if (rows[i] && rows[i].length > 0) {
         const campingName = rows[i][campingNameIndex]?.trim();
         // 캠핑장명이 있고, 헤더가 아닌 경우 데이터 행으로 간주
-        if (campingName && campingName !== '' && !headers.includes(campingName)) {
+        // 빈 행(구분만 있고 캠핑장명이 없는 경우)은 스킵
+        if (campingName && campingName !== '' && !headers.includes(campingName) && campingName !== '구 분') {
           dataStartIndex = i;
           break;
         }
@@ -232,10 +247,10 @@ export async function getSalesData() {
           return null;
         }
         
-        // 캠핑장명이 있는지 확인
+        // 캠핑장명이 있는지 확인 (F열 = 인덱스 5)
         const campingName = row[campingNameIndex]?.trim();
-        if (!campingName || campingName === '' || headers.includes(campingName)) {
-          return null; // 캠핑장명이 없거나 헤더와 동일하면 스킵
+        if (!campingName || campingName === '' || headers.includes(campingName) || campingName === '구 분') {
+          return null; // 캠핑장명이 없거나 헤더와 동일하거나 빈 행이면 스킵
         }
         
         // 모든 컬럼 데이터를 객체로 변환
@@ -249,10 +264,42 @@ export async function getSalesData() {
           const headerKey = header.trim();
           if (headerKey && row[colIndex] !== undefined) {
             const cellValue = String(row[colIndex]).trim();
-            // 빈 값도 포함 (빈 문자열도 저장하여 필터링에서 사용 가능하도록)
-            item[headerKey] = cellValue;
+            // '구 분' 같은 헤더는 제외
+            if (headerKey !== '구 분' && headerKey !== '') {
+              item[headerKey] = cellValue;
+            }
           }
         });
+        
+        // 주요 컬럼이 없으면 인덱스로 직접 매핑 (컬럼명이 다를 수 있음)
+        // C열(인덱스 2) = 지역(광역)
+        if ((!item['지역(광역)'] || item['지역(광역)'] === '') && row[2]) {
+          item['지역(광역)'] = String(row[2]).trim();
+        }
+        // D열(인덱스 3) = 지역(시/군/리)
+        if ((!item['지역(시/군/리)'] || item['지역(시/군/리)'] === '') && row[3]) {
+          item['지역(시/군/리)'] = String(row[3]).trim();
+        }
+        // I열(인덱스 8) = 컨택MD
+        if ((!item['컨택MD'] || item['컨택MD'] === '') && row[8]) {
+          item['컨택MD'] = String(row[8]).trim();
+        }
+        // J열(인덱스 9) = 컨택 최종일
+        if ((!item['컨택 최종일'] || item['컨택 최종일'] === '') && row[9]) {
+          item['컨택 최종일'] = String(row[9]).trim();
+        }
+        // K열(인덱스 10) = 결과
+        if ((!item['결과'] || item['결과'] === '') && row[10]) {
+          item['결과'] = String(row[10]).trim();
+        }
+        // L열(인덱스 11) = 사유
+        if ((!item['사유'] || item['사유'] === '') && row[11]) {
+          item['사유'] = String(row[11]).trim();
+        }
+        // M열(인덱스 12) = 내용
+        if ((!item['내용'] || item['내용'] === '') && row[12]) {
+          item['내용'] = String(row[12]).trim();
+        }
         
         return item;
       })
