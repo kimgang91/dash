@@ -571,14 +571,33 @@ export default function SalesDashboard() {
       
       // 결과가 "검토", "재연락" 등이고 내용에 시간/일정이 있으면 긍정적 맥락
       if (hasReviewResult && hasTimeline && !hasNegativeResult) {
-        // 일정 추출 (예: "3월초", "3월 중", "내년 1월" 등)
-        const timelineMatches = allText.match(/(\d+월\s*(초|중|말|말경)?|월\s*(초|중|말)|내년|다음\s*달|곧|조만간|준비\s*중|공사\s*중|작업\s*중|진행\s*중)/g);
-        const timelineText = timelineMatches ? timelineMatches.join(', ') : '';
+        // 일정 추출 (예: "3월초", "3월 중", "내년 1월", "공사 중 3월초 입점 예정" 등)
+        const timelinePattern = /(\d+월\s*(초|중|말|말경)?|월\s*(초|중|말)|내년|다음\s*달|곧|조만간|준비\s*중|공사\s*중|작업\s*중|진행\s*중|입점\s*예정|오픈\s*예정)/g;
+        const timelineMatches = allText.match(timelinePattern);
+        const timelineText = timelineMatches ? [...new Set(timelineMatches)].join(', ') : '';
         
-        if (reason === '기타') {
-          insight = `검토 중이며, 내용상 일정/준비 관련 언급(${timelineText || '일정 언급'})이 있어 입점 가능성이 높아 보입니다. ${timelineText ? `명시된 일정(${timelineText})에 맞춰 재연락하고, 입점 준비를 지원하면 전환 가능성이 높습니다.` : '구체적인 일정을 확인하고 지속적인 팔로업이 필요합니다.'}`;
+        // 내용에서 구체적인 일정 정보 추출 (예: "공사 중 3월초 입점 예정")
+        const detailedTimeline = allText.match(/(공사\s*중|작업\s*중|준비\s*중).*?(\d+월\s*(초|중|말)?|입점\s*예정|오픈\s*예정)/g);
+        const detailedText = detailedTimeline ? detailedTimeline[0] : '';
+        
+        if (reason === '기타' || !reasons.includes(reason)) {
+          // 기타 사유이거나 사유가 없는 경우
+          if (detailedText) {
+            insight = `검토 중이며, 내용상 "${detailedText}"와 같은 일정/준비 관련 언급이 있어 입점 가능성이 높아 보입니다. 내부 공사나 준비 작업으로 인해 당장 입점하지 못하는 상황으로 보이며, 명시된 일정에 맞춰 재연락하고 입점 준비를 지원하면 전환 가능성이 높습니다.`;
+          } else if (timelineText) {
+            insight = `검토 중이며, 내용상 일정/준비 관련 언급(${timelineText})이 있어 입점 가능성이 높아 보입니다. 명시된 일정(${timelineText})에 맞춰 재연락하고, 입점 준비를 지원하면 전환 가능성이 높습니다.`;
+          } else {
+            insight = `검토 중이며, 내용상 일정/준비 관련 언급이 있어 입점 가능성이 높아 보입니다. 구체적인 일정을 확인하고 지속적인 팔로업을 통해 전환을 유도할 수 있습니다.`;
+          }
         } else {
-          insight = `검토 중이며, ${reason} 관련 이슈가 있지만 일정/준비 관련 내용(${timelineText || '일정 언급'})이 있어 긍정적 신호로 보입니다. 해당 이슈를 해결하고 ${timelineText ? `일정(${timelineText})에 맞춰` : '적절한 시점에'} 재연락하면 입점 가능성이 높습니다.`;
+          // 특정 사유가 있는 경우
+          if (detailedText) {
+            insight = `검토 중이며, ${reason} 관련 이슈가 있지만 "${detailedText}"와 같은 일정/준비 관련 내용이 있어 긍정적 신호로 보입니다. 해당 이슈를 해결하고 명시된 일정에 맞춰 재연락하면 입점 가능성이 높습니다.`;
+          } else if (timelineText) {
+            insight = `검토 중이며, ${reason} 관련 이슈가 있지만 일정/준비 관련 내용(${timelineText})이 있어 긍정적 신호로 보입니다. 해당 이슈를 해결하고 ${timelineText ? `일정(${timelineText})에 맞춰` : '적절한 시점에'} 재연락하면 입점 가능성이 높습니다.`;
+          } else {
+            insight = `검토 중이며, ${reason} 관련 이슈가 있지만 일정/준비 관련 내용이 있어 긍정적 신호로 보입니다. 해당 이슈를 해결하고 적절한 시점에 재연락하면 입점 가능성이 높습니다.`;
+          }
         }
       } else if (hasReviewResult && !hasTimeline && !hasNegativeResult) {
         // 검토 중이지만 일정이 명확하지 않은 경우
