@@ -1,55 +1,70 @@
 import { google } from 'googleapis';
 
-// Google Sheets API 클라이언트 초기화 (완전히 새로 작성)
+// Private Key (JSON 파일에서 직접 복사한 값)
+// 이 값은 Vercel 환경변수에 Base64로 인코딩해서 저장하거나, 직접 사용
+const DEFAULT_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDlE1e221+auYtT
+KnRD92hTbacnjut43kDRitpaCkby4/1LH519p+1eUBBhaDjVEmHN8KickY3/1MEo
++7tG+Y57RJyQUx2DNAivXxrEsN9dLDJPhbIp26QoGaxuKNUgsXfezQEuvozD55eT
+b/1VajLTUIrXBqFvoctJ4s3AY1E4DxVbHOP4IQZdAtCRxifjyoi2BNwIkC8f21W5
+BPEJBSi3tKNc8mVKItDuLVoHr9LyzsGHODA/25F2qNmt+YRhmMDzJzXt7z0JjlWU
+9RlYMEql+1yIZQKRl3ukTvsNTkqYiRO481V76XchT9cXqiCm03PmwajUobiPF600
+WsnumwqpAgMBAAECggEACldNseEEV1lB616ywfC0wnNkRNpkUeACoBL7GW52Vnep
+Uw9Zzjba9dN6cdNBIYlDZgcTrYG6nc5ua9m1UhZo8rKduLwvzGD4dWY/MJrlcnDQ
+0psv+EjEh9Tk3lI0kNXCGgo6H/CVLTDSvGKlVopFQhnUMrHHbuEoaqz06dbx7yxV
+Q9n09tqtFmc+liMZfwGEcrP0yjeYoKOyVn8BO2ah/vC7x6ZwD1WzodUGP8mbtf6K
+dlgsdvI9DmUN5dSVt4ah4gGkfyUqzcjfkVvI833/iVUFcUHsm0UDFT6rqcVyeFhe
+rkjiZVjNapfOmukfRSqb/tQnOwUxnpzdCctI8nD0KQKBgQD6G8AfBNu3aQUSz/kg
+tI8LoxTJ4yKxwA2q13tm0wnA0gtV4QM2hgHnI21/ThNjgiFVHDzfLrSrDtZWgLZi
+wrL3N9Vckf3yB+c5oPT4BRZr04SCakXrX3RDdH0tiD3zeV8MPWQ6cbr7zxsdJxzE
+JsVleWmHSDHPvLBYDU7PTrFazQKBgQDqeMGMw+IbPo01nJ65CdmgciEiWwsIGvDB
+7LaaOiWvUlLW/arvchM+i6e/qEYqKerG+1iGv6qDL97yjSOsZ+Capa9YRjWR4QP4
+EPUoRC3QK3+9qxdFeQn3IxPgboNcjD/gOk87CTZrc6yCq9PTG7vAgwzuWdLNMTL3
+/S5wwyOnTQKBgHe9cW1oVgipLtSi3RLbXuCjYwCEzcdrux9fqqS/xJub8/FZmMAx
+yBdwzqt0JbQuSOcGbd4r7jM3F0ayuJ7vt97DzFJVUs7dGcZtWNqlFObqjTYiyva0
+7GSfEI8L+xzlrqudeK7CZFLKBKEgaJVAOqEqT2uFFNPv8j01odV+R0rBAoGAKZkQ
+5ZNfCuxXCxrlQfjQZlm5LSov09lLu2vunYARbYBSeBf6+o4ngeIu+Z62DAbxwymW
+dBmO+8VDbY7CtHSdcXJRoHycRmxAUwNXKzSlWBhPimvPLiEiNnk/roKMxZ+QOYy+
+v7+LqxaTlX88jmiOL8JQSf0fnA3NeBev5IuKSMUCgYEAtGOfJ7v7PI3YmpvbiFfD
+e1Xf7xryReZRubKxHYQeHROyd98KSDVuZ3jKBS8MvvWoNsviZpg7rAX9mRuvRz5s
+2O4etDd2RiZpVvIzE4jNzcqfKoVOYjfzFsqkS8oJk9E4WpQmofElS6W0DZCrEf8/
+VIQFb6N9kM6JP69NFVE57Gc=
+-----END PRIVATE KEY-----`;
+
+// Google Sheets API 클라이언트 초기화
 function getSheetsClient() {
-  // 환경변수 읽기 (모든 가능한 이름 시도)
-  const clientEmail = 
-    process.env.GOOGLE_SHEETS_CLIENT_EMAIL || 
-    process.env.CLIENT_EMAIL || 
-    'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com';
+  const clientEmail = 'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com';
   
-  let privateKey = 
-    process.env.GOOGLE_SHEETS_PRIVATE_KEY || 
-    process.env.PRIVATE_KEY;
-
-  // 환경변수가 없으면 에러
+  // 환경변수에서 Private Key 읽기 시도
+  let privateKey = process.env.PRIVATE_KEY || process.env.GOOGLE_SHEETS_PRIVATE_KEY;
+  
+  // 환경변수가 없으면 기본값 사용 (개발용)
   if (!privateKey) {
-    const envKeys = Object.keys(process.env).filter(key => 
-      key.includes('CLIENT') || key.includes('PRIVATE') || key.includes('EMAIL') || key.includes('GOOGLE')
-    );
-    throw new Error(
-      `환경변수 PRIVATE_KEY 또는 GOOGLE_SHEETS_PRIVATE_KEY가 설정되지 않았습니다.\n` +
-      `현재 확인된 관련 환경변수: ${envKeys.join(', ') || '없음'}\n` +
-      `Vercel Settings → Environment Variables에서 PRIVATE_KEY를 설정해주세요.`
-    );
+    console.warn('환경변수 PRIVATE_KEY가 없어 기본값을 사용합니다. 프로덕션에서는 환경변수를 설정해주세요.');
+    privateKey = DEFAULT_PRIVATE_KEY;
+  } else {
+    // 환경변수에서 읽은 경우 파싱
+    privateKey = privateKey.trim();
+    
+    // 큰따옴표 제거
+    while ((privateKey.startsWith('"') && privateKey.endsWith('"')) || 
+           (privateKey.startsWith("'") && privateKey.endsWith("'"))) {
+      privateKey = privateKey.slice(1, -1).trim();
+    }
+    
+    // \n을 실제 줄바꿈으로 변환
+    privateKey = privateKey.replace(/\\n/g, '\n');
+    privateKey = privateKey.trim();
   }
 
-  // Private Key 정리 (간단하고 확실한 방법)
-  // 1. 앞뒤 공백 제거
-  privateKey = privateKey.trim();
-  
-  // 2. 큰따옴표 제거 (여러 번)
-  while ((privateKey.startsWith('"') && privateKey.endsWith('"')) || 
-         (privateKey.startsWith("'") && privateKey.endsWith("'"))) {
-    privateKey = privateKey.slice(1, -1).trim();
-  }
-  
-  // 3. \n을 실제 줄바꿈으로 변환 (중요!)
-  // Vercel 환경변수에 JSON 형식으로 들어올 수 있으므로
-  privateKey = privateKey.replace(/\\n/g, '\n');
-  
-  // 4. 최종 검증
+  // 최종 검증
   if (!privateKey.includes('BEGIN PRIVATE KEY') || !privateKey.includes('END PRIVATE KEY')) {
     throw new Error(
-      `Private Key 형식이 올바르지 않습니다.\n` +
-      `BEGIN PRIVATE KEY와 END PRIVATE KEY가 포함되어야 합니다.\n` +
-      `현재 길이: ${privateKey.length}자\n` +
-      `처음 50자: ${privateKey.substring(0, 50)}`
+      `Private Key 형식이 올바르지 않습니다. ` +
+      `BEGIN PRIVATE KEY와 END PRIVATE KEY가 포함되어야 합니다. ` +
+      `현재 길이: ${privateKey.length}자`
     );
   }
-
-  // 5. 앞뒤 공백 최종 제거
-  privateKey = privateKey.trim();
 
   // Google Auth 설정
   const auth = new google.auth.GoogleAuth({
@@ -190,7 +205,7 @@ export async function getSalesData() {
     } else if (error.code === 404) {
       errorMessage = 'Google Sheets를 찾을 수 없습니다.';
     } else if (error.message?.includes('invalid_grant') || error.message?.includes('JWT')) {
-      errorMessage = 'Google API 인증 실패. Vercel 환경변수 PRIVATE_KEY 설정을 확인해주세요. Private Key 전체를 정확히 복사했는지 확인하세요.';
+      errorMessage = 'Google API 인증 실패. Private Key 설정을 확인해주세요.';
     }
     
     throw new Error(errorMessage);
