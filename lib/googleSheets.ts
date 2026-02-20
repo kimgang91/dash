@@ -10,11 +10,17 @@ function getSheetsClient() {
 
   // 디버깅: 어떤 환경변수가 있는지 로그 (민감 정보는 제외)
   const envKeys = Object.keys(process.env).filter(key => 
-    key.includes('CLIENT') || key.includes('PRIVATE') || key.includes('EMAIL')
+    key.includes('CLIENT') || key.includes('PRIVATE') || key.includes('EMAIL') || key.includes('GOOGLE')
   );
-  console.log('Available env keys:', envKeys);
-  console.log('Client email found:', !!clientEmail, clientEmail ? clientEmail.substring(0, 20) + '...' : 'NO');
-  console.log('Private key found:', !!privateKey, privateKey ? privateKey.substring(0, 30) + '...' : 'NO');
+  console.log('=== ENVIRONMENT VARIABLES DEBUG ===');
+  console.log('All relevant env keys:', envKeys);
+  console.log('GOOGLE_SHEETS_CLIENT_EMAIL:', !!process.env.GOOGLE_SHEETS_CLIENT_EMAIL, process.env.GOOGLE_SHEETS_CLIENT_EMAIL ? process.env.GOOGLE_SHEETS_CLIENT_EMAIL.substring(0, 30) + '...' : 'NOT SET');
+  console.log('CLIENT_EMAIL:', !!process.env.CLIENT_EMAIL, process.env.CLIENT_EMAIL ? process.env.CLIENT_EMAIL.substring(0, 30) + '...' : 'NOT SET');
+  console.log('GOOGLE_SHEETS_PRIVATE_KEY:', !!process.env.GOOGLE_SHEETS_PRIVATE_KEY, process.env.GOOGLE_SHEETS_PRIVATE_KEY ? 'SET (length: ' + process.env.GOOGLE_SHEETS_PRIVATE_KEY.length + ')' : 'NOT SET');
+  console.log('PRIVATE_KEY:', !!process.env.PRIVATE_KEY, process.env.PRIVATE_KEY ? 'SET (length: ' + process.env.PRIVATE_KEY.length + ')' : 'NOT SET');
+  console.log('Selected clientEmail:', clientEmail ? clientEmail.substring(0, 30) + '...' : 'NULL');
+  console.log('Selected privateKey:', privateKey ? 'SET (length: ' + privateKey.length + ')' : 'NULL');
+  console.log('===================================');
 
   if (!clientEmail) {
     throw new Error(
@@ -180,21 +186,29 @@ export async function getSalesData() {
     // 요구사항: C열(2)=시/도, D열(3)=시/군/구, I열(8)=담당 MD, K열(10)=결과, L열(11)=사유
     const columnMap: { [key: string]: number } = {};
     
-    // 먼저 헤더에서 찾기
+    // 먼저 헤더에서 찾기 (실제 스프레드시트 컬럼명에 맞게)
     headers.forEach((header, index) => {
       const headerLower = header.trim().toLowerCase();
-      if (headerLower.includes('시/도') || headerLower.includes('시도')) {
+      // 지역(광역) -> 시/도
+      if (headerLower.includes('지역(광역)') || headerLower.includes('지역') && headerLower.includes('광역') || 
+          headerLower.includes('시/도') || headerLower.includes('시도')) {
         columnMap['시/도'] = index;
       }
-      if (headerLower.includes('시/군/구') || headerLower.includes('시군구')) {
+      // 지역(시/군/리) -> 시/군/구
+      if (headerLower.includes('지역(시/군/리)') || headerLower.includes('지역') && (headerLower.includes('시/군') || headerLower.includes('시군')) ||
+          headerLower.includes('시/군/구') || headerLower.includes('시군구')) {
         columnMap['시/군/구'] = index;
       }
-      if (headerLower.includes('담당') && (headerLower.includes('md') || headerLower.includes('m.d'))) {
+      // 컨택MD -> 담당 MD
+      if (headerLower.includes('컨택md') || headerLower.includes('컨택') && headerLower.includes('md') ||
+          headerLower.includes('담당') && (headerLower.includes('md') || headerLower.includes('m.d'))) {
         columnMap['담당 MD'] = index;
       }
+      // 결과
       if (headerLower.includes('결과')) {
         columnMap['결과'] = index;
       }
+      // 사유
       if (headerLower.includes('사유')) {
         columnMap['사유'] = index;
       }
