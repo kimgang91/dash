@@ -42,14 +42,22 @@ export default function SalesDashboard() {
       }
       const result = await response.json();
       if (result.error) {
-        throw new Error(result.error);
+        // 상세한 에러 메시지 표시
+        let errorMsg = result.error;
+        if (result.details && process.env.NODE_ENV === 'development') {
+          console.error('Error details:', result.details);
+          console.error('Env check:', result.envCheck);
+        }
+        throw new Error(errorMsg);
       }
       if (result.data) {
         setData(result.data);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching data:', error);
-      alert('데이터를 불러오는 중 오류가 발생했습니다. 환경 변수 설정을 확인해주세요.');
+      // 더 구체적인 에러 메시지 표시
+      const errorMessage = error.message || '데이터를 불러오는 중 오류가 발생했습니다.';
+      alert(errorMessage + '\n\nVercel 환경변수 설정을 확인해주세요:\n- GOOGLE_SHEETS_CLIENT_EMAIL\n- GOOGLE_SHEETS_PRIVATE_KEY');
     } finally {
       setLoading(false);
     }

@@ -2,10 +2,30 @@ import { google } from 'googleapis';
 
 // Google Sheets API 클라이언트 초기화
 function getSheetsClient() {
+  // 환경변수 검증
+  const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY;
+
+  if (!clientEmail) {
+    throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL 환경변수가 설정되지 않았습니다. Vercel 환경변수 설정을 확인해주세요.');
+  }
+
+  if (!privateKey) {
+    throw new Error('GOOGLE_SHEETS_PRIVATE_KEY 환경변수가 설정되지 않았습니다. Vercel 환경변수 설정을 확인해주세요.');
+  }
+
+  // Private Key에서 \n을 실제 줄바꿈으로 변환
+  const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+
+  // Private Key 형식 검증
+  if (!formattedPrivateKey.includes('BEGIN PRIVATE KEY')) {
+    throw new Error('GOOGLE_SHEETS_PRIVATE_KEY 형식이 올바르지 않습니다. Private Key 전체를 복사했는지 확인해주세요.');
+  }
+
   const auth = new google.auth.GoogleAuth({
     credentials: {
-      client_email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
-      private_key: process.env.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      client_email: clientEmail,
+      private_key: formattedPrivateKey,
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
@@ -29,7 +49,7 @@ export async function getSalesData() {
     
     // gid=907098998에 해당하는 시트 찾기
     const targetSheet = spreadsheet.data.sheets?.find(
-      (sheet) => sheet.properties?.sheetId === parseInt(SALES_DB_SHEET_ID)
+      (sheet: any) => sheet.properties?.sheetId === parseInt(SALES_DB_SHEET_ID)
     );
     
     const sheetName = targetSheet?.properties?.title || 'Sheet1';
@@ -125,29 +145,45 @@ export async function getSalesData() {
         
         // 매핑된 컬럼 값 추출
         if (columnMap['시/도'] !== undefined) {
-          item['시/도'] = row[columnMap['시/도']] ? String(row[columnMap['시/도']]).trim() : '';
+          item['시/도'] = (row as any[])[columnMap['시/도']] ? String((row as any[])[columnMap['시/도']]).trim() : '';
         }
         if (columnMap['시/군/구'] !== undefined) {
-          item['시/군/구'] = row[columnMap['시/군/구']] ? String(row[columnMap['시/군/구']]).trim() : '';
+          item['시/군/구'] = (row as any[])[columnMap['시/군/구']] ? String((row as any[])[columnMap['시/군/구']]).trim() : '';
         }
         if (columnMap['담당 MD'] !== undefined) {
-          item['담당 MD'] = row[columnMap['담당 MD']] ? String(row[columnMap['담당 MD']]).trim() : '';
+          item['담당 MD'] = (row as any[])[columnMap['담당 MD']] ? String((row as any[])[columnMap['담당 MD']]).trim() : '';
         }
         if (columnMap['결과'] !== undefined) {
-          item['결과'] = row[columnMap['결과']] ? String(row[columnMap['결과']]).trim() : '';
+          item['결과'] = (row as any[])[columnMap['결과']] ? String((row as any[])[columnMap['결과']]).trim() : '';
         }
         if (columnMap['사유'] !== undefined) {
-          item['사유'] = row[columnMap['사유']] ? String(row[columnMap['사유']]).trim() : '';
+          item['사유'] = (row as any[])[columnMap['사유']] ? String((row as any[])[columnMap['사유']]).trim() : '';
         }
         
         return item;
       })
-      .filter((item) => item !== null && (item['담당 MD'] || item['결과'])); // null 제거 및 필수 데이터 확인
+      .filter((item: any) => item !== null && (item['담당 MD'] || item['결과'])); // null 제거 및 필수 데이터 확인
 
     console.log(`Processed data items: ${data.length}`);
     return data;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching sales data:', error);
-    throw error;
+    
+    // 구체적인 에러 메시지 생성
+    let errorMessage = '데이터를 불러오는 중 오류가 발생했습니다.';
+    
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.code === 403 || error.message?.includes('PERMISSION_DENIED')) {
+      errorMessage = 'Google Sheets 접근 권한이 없습니다. 서비스 계정 이메일을 Google Sheets에 공유했는지 확인해주세요.';
+    } else if (error.code === 404 || error.message?.includes('not found')) {
+      errorMessage = 'Google Sheets를 찾을 수 없습니다. 스프레드시트 ID를 확인해주세요.';
+    } else if (error.message?.includes('invalid_grant') || error.message?.includes('unauthorized')) {
+      errorMessage = 'Google API 인증 실패. 환경변수(GOOGLE_SHEETS_CLIENT_EMAIL, GOOGLE_SHEETS_PRIVATE_KEY) 설정을 확인해주세요.';
+    } else if (error.message?.includes('환경변수')) {
+      errorMessage = error.message;
+    }
+    
+    throw new Error(errorMessage);
   }
 }
