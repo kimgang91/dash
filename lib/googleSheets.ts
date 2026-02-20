@@ -1,10 +1,8 @@
 import { google } from 'googleapis';
 
-// 서비스 계정 정보 (JSON 파일에서 직접)
-const SERVICE_ACCOUNT = {
-  type: 'service_account',
-  project_id: 'genial-retina-488004-s8',
-  private_key_id: '3903822f056926ad2d3bcf3184532ccb8ff15d26',
+// 서비스 계정 정보 (JSON 파일에서 직접 복사)
+const SERVICE_ACCOUNT_CREDENTIALS = {
+  client_email: 'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com',
   private_key: `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDlE1e221+auYtT
 KnRD92hTbacnjut43kDRitpaCkby4/1LH519p+1eUBBhaDjVEmHN8KickY3/1MEo
@@ -33,20 +31,12 @@ e1Xf7xryReZRubKxHYQeHROyd98KSDVuZ3jKBS8MvvWoNsviZpg7rAX9mRuvRz5s
 2O4etDd2RiZpVvIzE4jNzcqfKoVOYjfzFsqkS8oJk9E4WpQmofElS6W0DZCrEf8/
 VIQFb6N9kM6JP69NFVE57Gc=
 -----END PRIVATE KEY-----`,
-  client_email: 'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com',
-  client_id: '102732460311255439751',
-  auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-  token_uri: 'https://oauth2.googleapis.com/token',
-  auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
-  client_x509_cert_url: 'https://www.googleapis.com/robot/v1/metadata/x509/dashboard%40genial-retina-488004-s8.iam.gserviceaccount.com',
-  universe_domain: 'googleapis.com'
 };
 
 // Google Sheets API 클라이언트 초기화
 function getSheetsClient() {
-  // 서비스 계정 정보 직접 사용
   const auth = new google.auth.GoogleAuth({
-    credentials: SERVICE_ACCOUNT,
+    credentials: SERVICE_ACCOUNT_CREDENTIALS,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
 
@@ -72,7 +62,11 @@ export async function getSalesData() {
       (sheet: any) => String(sheet.properties?.sheetId) === SALES_DB_SHEET_ID
     );
     
-    const sheetName = targetSheet?.properties?.title || 'Sheet1';
+    if (!targetSheet) {
+      throw new Error(`시트 ID ${SALES_DB_SHEET_ID}에 해당하는 시트를 찾을 수 없습니다.`);
+    }
+    
+    const sheetName = targetSheet.properties?.title || 'Sheet1';
     console.log(`Using sheet: ${sheetName} (gid: ${SALES_DB_SHEET_ID})`);
     
     // 데이터 가져오기
@@ -90,36 +84,32 @@ export async function getSalesData() {
     console.log(`Total rows fetched: ${rows.length}`);
 
     // 헤더 찾기 (3번째 행이 헤더)
-    let headerRowIndex = 2; // 기본값: 3번째 행
+    let headerRowIndex = 2;
     for (let i = 0; i < Math.min(5, rows.length); i++) {
       if (rows[i] && Array.isArray(rows[i])) {
         const rowText = rows[i].join(' ');
         if (rowText.includes('지역') || rowText.includes('컨택') || rowText.includes('결과')) {
           headerRowIndex = i;
-          console.log(`Header found at row index: ${headerRowIndex}`);
           break;
         }
       }
     }
 
     const headers = rows[headerRowIndex] as string[];
-    if (!headers) {
-      console.error('Header row not found');
-      return [];
+    if (!headers || headers.length === 0) {
+      throw new Error('헤더 행을 찾을 수 없습니다.');
     }
 
-    console.log(`Headers: ${headers.slice(0, 5).join(', ')}...`);
-
-    // 컬럼 매핑 (직접 인덱스 사용)
+    // 컬럼 매핑
     const columnMap: { [key: string]: number } = {
-      '시/도': 2,        // C열: 지역(광역)
-      '시/군/구': 3,     // D열: 지역(시/군/리)
-      '담당 MD': 8,      // I열: 컨택MD
-      '결과': 10,        // K열: 결과
-      '사유': 11,        // L열: 사유
+      '시/도': 2,
+      '시/군/구': 3,
+      '담당 MD': 8,
+      '결과': 10,
+      '사유': 11,
     };
 
-    // 헤더에서 실제 컬럼명 확인하여 매핑 업데이트
+    // 헤더에서 실제 컬럼명 확인
     headers.forEach((header, index) => {
       const headerLower = header.trim().toLowerCase();
       if (headerLower.includes('지역') && headerLower.includes('광역')) {
@@ -143,8 +133,12 @@ export async function getSalesData() {
     const dataRows = rows.slice(headerRowIndex + 1);
     const data = dataRows
       .map((row: any, index: number) => {
-        // 빈 행 체크
-        if (!row || !Array.isArray(row) || row.every((cell: any) => !cell || String(cell).trim() === '')) {
+        if (!row || !Array.isArray(row)) {
+          return null;
+        }
+        
+        const hasData = row.some((cell: any) => cell && String(cell).trim() !== '');
+        if (!hasData) {
           return null;
         }
 
@@ -152,7 +146,6 @@ export async function getSalesData() {
           id: index + 1,
         };
         
-        // 컬럼 값 추출
         if (columnMap['시/도'] !== undefined && row[columnMap['시/도']]) {
           item['시/도'] = String(row[columnMap['시/도']]).trim();
         }
@@ -169,31 +162,32 @@ export async function getSalesData() {
           item['사유'] = String(row[columnMap['사유']]).trim();
         }
         
-        // 최소한 MD나 결과가 있어야 유효한 데이터
         return (item['담당 MD'] || item['결과']) ? item : null;
       })
       .filter((item: any) => item !== null);
 
-    console.log(`Processed data items: ${data.length}`);
+    console.log(`Processed ${data.length} data items`);
     return data;
   } catch (error: any) {
     console.error('Error fetching sales data:', error);
     
-    // 구체적인 에러 메시지
     let errorMessage = '데이터를 불러오는 중 오류가 발생했습니다.';
     
-    if (error.message) {
-      errorMessage = error.message;
-    } else if (error.code === 403) {
-      errorMessage = `Google Sheets 접근 권한이 없습니다. 
-서비스 계정 이메일(${SERVICE_ACCOUNT.client_email})을 Google Sheets에 공유했는지 확인해주세요.
-Google Sheets 문서를 열고 "공유" 버튼을 클릭하여 위 이메일을 추가하세요.`;
+    if (error.code === 403) {
+      errorMessage = `Google Sheets 접근 권한이 없습니다.\n\n` +
+        `해결 방법:\n` +
+        `1. Google Sheets 문서를 엽니다:\n` +
+        `   https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit\n` +
+        `2. 우측 상단 "공유" 버튼을 클릭합니다\n` +
+        `3. 다음 이메일을 추가합니다: ${SERVICE_ACCOUNT_CREDENTIALS.client_email}\n` +
+        `4. 권한을 "보기 가능(뷰어)"로 설정합니다\n` +
+        `5. "완료"를 클릭합니다`;
     } else if (error.code === 404) {
       errorMessage = 'Google Sheets를 찾을 수 없습니다. 스프레드시트 ID를 확인해주세요.';
     } else if (error.message?.includes('invalid_grant') || error.message?.includes('JWT')) {
-      errorMessage = `Google API 인증 실패. 
-서비스 계정이 올바르게 설정되었는지 확인해주세요.
-에러 코드: ${error.code || 'N/A'}`;
+      errorMessage = 'Google API 인증 실패. 서비스 계정 설정을 확인해주세요.';
+    } else if (error.message) {
+      errorMessage = error.message;
     }
     
     throw new Error(errorMessage);

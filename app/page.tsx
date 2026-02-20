@@ -57,7 +57,21 @@ export default function SalesDashboard() {
       console.error('Error fetching data:', error);
       // 더 구체적인 에러 메시지 표시
       const errorMessage = error.message || '데이터를 불러오는 중 오류가 발생했습니다.';
-      alert(errorMessage + '\n\nVercel 환경변수 설정을 확인해주세요:\n- GOOGLE_SHEETS_CLIENT_EMAIL\n- GOOGLE_SHEETS_PRIVATE_KEY');
+      // 에러 메시지에 따라 다른 안내 표시
+      if (errorMessage.includes('접근 권한') || errorMessage.includes('403')) {
+        alert(
+          'Google Sheets 접근 권한이 없습니다.\n\n' +
+          '해결 방법:\n' +
+          '1. Google Sheets 문서를 엽니다:\n' +
+          '   https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit\n' +
+          '2. 우측 상단 "공유" 버튼 클릭\n' +
+          '3. 다음 이메일 추가: dashboard@genial-retina-488004-s8.iam.gserviceaccount.com\n' +
+          '4. 권한: "보기 가능(뷰어)" 선택\n' +
+          '5. "완료" 클릭'
+        );
+      } else {
+        alert(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
