@@ -173,10 +173,8 @@ export async function getSalesData() {
           const headerKey = header.trim();
           if (headerKey && row[colIndex] !== undefined) {
             const cellValue = String(row[colIndex]).trim();
-            // 빈 값도 포함하되, null/undefined는 제외
-            if (cellValue !== '' && cellValue !== 'undefined' && cellValue !== 'null') {
-              item[headerKey] = cellValue;
-            }
+            // 빈 값도 포함 (빈 문자열도 저장하여 필터링에서 사용 가능하도록)
+            item[headerKey] = cellValue;
           }
         });
         
@@ -185,7 +183,24 @@ export async function getSalesData() {
       .filter((item: any) => item !== null && item['캠핑장명']);
 
     console.log(`Processed ${data.length} camping sites`);
-    console.log(`Sample data (first item):`, data[0] ? Object.keys(data[0]) : 'No data');
+    if (data.length > 0) {
+      console.log(`Sample data (first item):`, data[0]);
+      console.log(`Sample data keys:`, Object.keys(data[0]));
+      // 컬럼명 확인
+      const sampleItem = data[0];
+      console.log(`컬럼 확인:`, {
+        '지역(광역)': sampleItem['지역(광역)'],
+        '지역(시/군/리)': sampleItem['지역(시/군/리)'],
+        '컨택MD': sampleItem['컨택MD'],
+        '결과': sampleItem['결과'],
+        '사유': sampleItem['사유'],
+      });
+      // 컨택MD가 있는 항목 수 확인
+      const withMD = data.filter(item => item['컨택MD'] && item['컨택MD'].trim() !== '').length;
+      const withResult = data.filter(item => item['결과'] && item['결과'].trim() !== '').length;
+      console.log(`컨택MD가 있는 항목: ${withMD}개`);
+      console.log(`결과가 있는 항목: ${withResult}개`);
+    }
     return data;
   } catch (error: any) {
     console.error('Error fetching sales data:', error);

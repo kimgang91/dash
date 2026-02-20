@@ -74,6 +74,18 @@ export default function SalesDashboard() {
         throw new Error(errorMsg);
       }
       if (result.data) {
+        console.log(`📊 데이터 로드 완료: ${result.data.length}개 캠핑장`);
+        console.log(`📊 샘플 데이터:`, result.data[0]);
+        // 컬럼명 확인
+        if (result.data.length > 0) {
+          const sample = result.data[0];
+          console.log(`📊 컬럼명 확인:`, Object.keys(sample).slice(0, 20));
+          console.log(`📊 주요 컬럼 값:`, {
+            '지역(광역)': sample['지역(광역)'],
+            '컨택MD': sample['컨택MD'],
+            '결과': sample['결과'],
+          });
+        }
         setData(result.data);
         setLastUpdateTime(new Date());
         setRefreshKey(prev => prev + 1);
@@ -129,14 +141,37 @@ export default function SalesDashboard() {
     });
   }, [data, filters, searchTerm]);
 
-  // KPI 계산
+  // KPI 계산 (원본 데이터 기준)
   const kpis = useMemo(() => {
-    const total = filteredData.length;
-    const newEntry = filteredData.filter((item) => item['결과'] === '입점(신규)').length;
-    const rejected = filteredData.filter((item) => item['결과'] === '거절').length;
-    const contacts = filteredData.filter((item) => item['컨택MD']).length;
+    const total = data.length;
+    // 결과 필드가 있는 항목만 카운트 (빈 문자열이 아닌 경우)
+    const newEntry = data.filter((item) => {
+      const result = item['결과'];
+      return result && result.trim() !== '' && result === '입점(신규)';
+    }).length;
+    const rejected = data.filter((item) => {
+      const result = item['결과'];
+      return result && result.trim() !== '' && result === '거절';
+    }).length;
+    // 컨택MD가 있는 항목만 카운트 (빈 문자열이 아닌 경우)
+    const contacts = data.filter((item) => {
+      const md = item['컨택MD'];
+      return md && md.trim() !== '';
+    }).length;
+    
+    // 디버깅 로그
+    if (data.length > 0 && contacts === 0) {
+      console.warn('⚠️ 컨택MD가 없는 것으로 보입니다. 샘플 데이터 확인:', {
+        sample: data[0],
+        allKeys: Object.keys(data[0]),
+        hasContactMD: data[0]['컨택MD'],
+        hasContactMDAlt: data[0]['컨택 MD'], // 공백이 다를 수 있음
+        hasContactMDAlt2: data[0]['컨택MD '], // 뒤에 공백이 있을 수 있음
+      });
+    }
+    
     return { total, newEntry, rejected, contacts };
-  }, [filteredData]);
+  }, [data]);
 
   // 지역별 현황 (지역(광역))
   const regionData = useMemo(() => {
@@ -439,6 +474,7 @@ export default function SalesDashboard() {
         reason: item['사유'] || '기타',
         result: item['결과'] || '',
         md: item['컨택MD'] || '',
+        fullData: item, // 전체 데이터도 포함
       }));
 
     if (contents.length === 0) return null;
@@ -452,79 +488,175 @@ export default function SalesDashboard() {
       }
     });
 
-    // 감정/반응 키워드 분석
+    // 감정/반응 키워드 분석 (확장)
     const sentimentKeywords = {
-      positive: ['좋', '만족', '괜찮', '좋아', '추천', '감사', '도움', '유용', '편리'],
-      negative: ['불만', '문제', '어려', '불편', '아쉽', '부족', '개선', '불안', '걱정'],
-      neutral: ['확인', '검토', '논의', '협의', '대기', '보류', '고려'],
+      positive: ['좋', '만족', '괜찮', '좋아', '추천', '감사', '도움', '유용', '편리', '입점 예정', '예정', '준비', '진행', '완료', '승인', '협의 완료'],
+      negative: ['불만', '문제', '어려', '불편', '아쉽', '부족', '개선', '불안', '걱정', '거절', '불가', '어렵', '불가능'],
+      neutral: ['확인', '검토', '논의', '협의', '대기', '보류', '고려', '재연락', '재검토'],
+      // 시간/일정 관련 키워드 (긍정적 맥락)
+      timeline: ['예정', '준비', '공사', '작업', '진행', '완료', '오픈', '시작', '개장', '입점', '월', '일', '초', '중', '말'],
     };
 
-    // 사유별 인사이트 생성
+    // 결과+사유+내용 종합 분석을 위한 데이터 구조
+    const resultReasonContentMap: { [key: string]: { [key: string]: any[] } } = {};
+    
+    contents.forEach((item) => {
+      const resultKey = item.result || '미지정';
+      const reasonKey = item.reason || '기타';
+      
+      if (!resultReasonContentMap[resultKey]) {
+        resultReasonContentMap[resultKey] = {};
+      }
+      if (!resultReasonContentMap[resultKey][reasonKey]) {
+        resultReasonContentMap[resultKey][reasonKey] = [];
+      }
+      resultReasonContentMap[resultKey][reasonKey].push(item);
+    });
+
+    // 사유별 인사이트 생성 (결과와 내용을 함께 분석)
     const insightsByReason: { [key: string]: string } = {};
 
     reasons.forEach((reason) => {
-      const reasonContents = reasonBasedAnalysis[reason] || [];
-      if (reasonContents.length === 0) return;
+      // 해당 사유를 가진 모든 항목 (결과와 내용 포함)
+      const reasonItems = contents.filter((c) => c.reason === reason);
+      if (reasonItems.length === 0) return;
 
+      const reasonContents = reasonItems.map((c) => c.content);
       const allText = reasonContents.join(' ');
+      
+      // 결과별 분류
+      const resultGroups: { [key: string]: number } = {};
+      reasonItems.forEach((item) => {
+        const result = item.result || '미지정';
+        resultGroups[result] = (resultGroups[result] || 0) + 1;
+      });
+
+      // 감정 분석 (내용 기반)
       const positiveCount = sentimentKeywords.positive.filter((kw) => allText.includes(kw)).length;
       const negativeCount = sentimentKeywords.negative.filter((kw) => allText.includes(kw)).length;
-      const neutralCount = sentimentKeywords.neutral.filter((kw) => allText.includes(kw)).length;
+      const timelineCount = sentimentKeywords.timeline.filter((kw) => allText.includes(kw)).length;
+      
+      // 시간/일정 관련 키워드 확인 (입점 예정, 공사 중 등)
+      const hasTimeline = timelineCount > 0 || 
+        /(\d+월|월초|월말|월 중|일|일자|예정|준비|공사|작업|진행|완료|오픈|시작|개장|입점)/.test(allText);
+      
+      // 결과 기반 분석
+      const hasReviewResult = Object.keys(resultGroups).some(r => 
+        r.includes('검토') || r.includes('재연락') || r.includes('대기') || r.includes('논의')
+      );
+      const hasPositiveResult = Object.keys(resultGroups).some(r => 
+        r.includes('입점') || r.includes('신규') || r.includes('승인')
+      );
+      const hasNegativeResult = Object.keys(resultGroups).some(r => 
+        r.includes('거절') || r.includes('불가')
+      );
 
       // 주요 키워드 추출
-      const commonWords = ['수수료', '가격', '비용', '기능', '서비스', '시스템', '플랫폼', '약정', '계약', '조건'];
+      const commonWords = ['수수료', '가격', '비용', '기능', '서비스', '시스템', '플랫폼', '약정', '계약', '조건', '공사', '입점', '예정'];
       const foundKeywords = commonWords.filter((word) => allText.includes(word));
 
-      // 인사이트 생성 (더 정교하게)
+      // 인사이트 생성 (결과+사유+내용 종합 분석)
       let insight = '';
       
-      // 텍스트 길이 및 내용 분석
-      const avgLength = reasonContents.reduce((sum, text) => sum + text.length, 0) / reasonContents.length;
-      const hasQuestion = allText.includes('?') || allText.includes('？');
-      const hasExclamation = allText.includes('!') || allText.includes('！');
-      
-      if (reason === '수수료') {
-        if (negativeCount > positiveCount) {
-          insight = `수수료 관련 부정적 반응이 우세합니다. 가격 정책 재검토 또는 유연한 수수료 체계(할인, 단계별 수수료 등) 제안이 필요합니다. ${foundKeywords.length > 0 ? foundKeywords[0] + ' 관련' : ''} 구체적 우려사항을 해결하면 전환 가능성이 높아집니다.`;
-        } else if (positiveCount > negativeCount) {
-          insight = `수수료에 대한 긍정적 반응이 있습니다. 현재 수수료 체계가 수용 가능한 수준으로 보이며, 추가 가치 제안으로 입점을 유도할 수 있습니다.`;
+      // 결과가 "검토", "재연락" 등이고 내용에 시간/일정이 있으면 긍정적 맥락
+      if (hasReviewResult && hasTimeline && !hasNegativeResult) {
+        // 일정 추출 (예: "3월초", "3월 중", "내년 1월" 등)
+        const timelineMatches = allText.match(/(\d+월\s*(초|중|말|말경)?|월\s*(초|중|말)|내년|다음\s*달|곧|조만간|준비\s*중|공사\s*중|작업\s*중|진행\s*중)/g);
+        const timelineText = timelineMatches ? timelineMatches.join(', ') : '';
+        
+        if (reason === '기타') {
+          insight = `검토 중이며, 내용상 일정/준비 관련 언급(${timelineText || '일정 언급'})이 있어 입점 가능성이 높아 보입니다. ${timelineText ? `명시된 일정(${timelineText})에 맞춰 재연락하고, 입점 준비를 지원하면 전환 가능성이 높습니다.` : '구체적인 일정을 확인하고 지속적인 팔로업이 필요합니다.'}`;
         } else {
-          insight = `수수료 관련 논의가 진행 중입니다. 명확한 가격 제안과 ROI(투자 대비 효과)를 구체적으로 제시하면 결정에 도움이 될 것입니다.`;
+          insight = `검토 중이며, ${reason} 관련 이슈가 있지만 일정/준비 관련 내용(${timelineText || '일정 언급'})이 있어 긍정적 신호로 보입니다. 해당 이슈를 해결하고 ${timelineText ? `일정(${timelineText})에 맞춰` : '적절한 시점에'} 재연락하면 입점 가능성이 높습니다.`;
         }
-      } else if (reason === '기능불만') {
-        const featureKeywords = foundKeywords.filter(kw => ['기능', '시스템', '플랫폼'].includes(kw));
-        insight = `기능 관련 개선 요구가 ${reasonContents.length}건 확인되었습니다. ${featureKeywords.length > 0 ? featureKeywords.join(', ') + ' 관련' : '주요'} 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하면 신뢰도 향상에 도움이 됩니다.`;
-      } else if (reason === '서비스불만') {
-        insight = `서비스 품질에 대한 우려가 ${reasonContents.length}건 확인되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이는 것이 중요합니다. 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
-      } else if (reason === '현재만족') {
-        insight = `현재 서비스에 만족하고 있어 추가 제안이 어려울 수 있습니다. 장기적 관계 구축과 점진적 업셀링 전략을 고려하세요. 새로운 기능이나 혜택을 소개하는 방식으로 접근하면 효과적일 수 있습니다.`;
-      } else if (reason === '약정기간') {
-        insight = `약정 기간 관련 협의가 필요합니다. 유연한 약정 옵션(단기/중기/장기) 제공 또는 기간별 혜택 차별화(기간이 길수록 할인율 증가 등)로 합의점을 찾을 수 있습니다.`;
+      } else if (hasReviewResult && !hasTimeline && !hasNegativeResult) {
+        // 검토 중이지만 일정이 명확하지 않은 경우
+        if (reason === '기타') {
+          insight = `검토 중입니다. 구체적인 일정이나 준비 상황을 확인하고, 지속적인 팔로업을 통해 입점 가능성을 높일 수 있습니다.`;
+        } else {
+          insight = `검토 중이며, ${reason} 관련 이슈가 있습니다. 해당 이슈를 해결하고 구체적인 일정을 확인한 후 재연락하면 입점 가능성이 높아집니다.`;
+        }
+      } else if (hasPositiveResult) {
+        // 이미 긍정적 결과
+        if (reason === '수수료') {
+          insight = `입점 관련 긍정적 결과가 있으며, 수수료에 대한 논의가 있었습니다. 현재 수수료 체계가 수용 가능한 것으로 보이며, 최종 입점을 위한 후속 조치가 필요합니다.`;
+        } else {
+          insight = `입점 관련 긍정적 결과가 있습니다. ${reason} 관련 내용이 있지만 전반적으로 긍정적인 흐름으로 보입니다.`;
+        }
+      } else if (hasNegativeResult) {
+        // 부정적 결과
+        if (reason === '수수료') {
+          insight = `수수료 관련 부정적 반응으로 인해 거절되었습니다. 가격 정책 재검토 또는 유연한 수수료 체계(할인, 단계별 수수료 등) 제안이 필요합니다. 구체적 우려사항을 해결하면 재검토 기회를 만들 수 있습니다.`;
+        } else if (reason === '기능불만') {
+          insight = `기능 관련 개선 요구로 인해 거절되었습니다. 주요 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하여 신뢰도를 높이는 것이 중요합니다.`;
+        } else if (reason === '서비스불만') {
+          insight = `서비스 품질에 대한 우려로 인해 거절되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이고, 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
+        } else {
+          insight = `${reason} 관련 이슈로 인해 거절되었습니다. 구체적인 우려사항을 파악하고 맞춤형 해결 방안을 제시하면 재검토 가능성이 있습니다.`;
+        }
       } else {
-        insight = `기타 사유로 인한 반응입니다. 개별 맞춤 접근이 필요하며, 구체적인 우려사항을 정확히 파악한 후 맞춤형 솔루션을 제시하는 것이 중요합니다.`;
-      }
-      
-      // 추가 인사이트 (질문이나 감정 표현이 있는 경우)
-      if (hasQuestion && insight) {
-        insight += ' 질문이 많다면 명확한 답변과 추가 정보 제공이 필요합니다.';
-      }
-      if (hasExclamation && negativeCount > 0) {
-        insight += ' 강한 감정 표현이 있다면 즉각적인 대응과 해결 방안 제시가 중요합니다.';
+        // 검토 중이거나 중립적
+        if (reason === '수수료') {
+          if (negativeCount > positiveCount) {
+            insight = `수수료 관련 부정적 반응이 우세합니다. 가격 정책 재검토 또는 유연한 수수료 체계(할인, 단계별 수수료 등) 제안이 필요합니다. ${foundKeywords.length > 0 ? foundKeywords[0] + ' 관련' : ''} 구체적 우려사항을 해결하면 전환 가능성이 높아집니다.`;
+          } else if (positiveCount > negativeCount) {
+            insight = `수수료에 대한 긍정적 반응이 있습니다. 현재 수수료 체계가 수용 가능한 수준으로 보이며, 추가 가치 제안으로 입점을 유도할 수 있습니다.`;
+          } else {
+            insight = `수수료 관련 논의가 진행 중입니다. 명확한 가격 제안과 ROI(투자 대비 효과)를 구체적으로 제시하면 결정에 도움이 될 것입니다.`;
+          }
+        } else if (reason === '기능불만') {
+          const featureKeywords = foundKeywords.filter(kw => ['기능', '시스템', '플랫폼'].includes(kw));
+          insight = `기능 관련 개선 요구가 ${reasonContents.length}건 확인되었습니다. ${featureKeywords.length > 0 ? featureKeywords.join(', ') + ' 관련' : '주요'} 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하면 신뢰도 향상에 도움이 됩니다.`;
+        } else if (reason === '서비스불만') {
+          insight = `서비스 품질에 대한 우려가 ${reasonContents.length}건 확인되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이는 것이 중요합니다. 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
+        } else if (reason === '현재만족') {
+          insight = `현재 서비스에 만족하고 있어 추가 제안이 어려울 수 있습니다. 장기적 관계 구축과 점진적 업셀링 전략을 고려하세요. 새로운 기능이나 혜택을 소개하는 방식으로 접근하면 효과적일 수 있습니다.`;
+        } else if (reason === '약정기간') {
+          insight = `약정 기간 관련 협의가 필요합니다. 유연한 약정 옵션(단기/중기/장기) 제공 또는 기간별 혜택 차별화(기간이 길수록 할인율 증가 등)로 합의점을 찾을 수 있습니다.`;
+        } else {
+          // 기타 사유 - 내용 분석 강화
+          if (hasTimeline && !hasNegativeResult) {
+            insight = `기타 사유이지만, 내용상 일정/준비 관련 언급이 있어 입점 가능성이 있습니다. 구체적인 일정을 확인하고 지속적인 팔로업을 통해 전환을 유도할 수 있습니다.`;
+          } else if (hasReviewResult) {
+            insight = `기타 사유로 검토 중입니다. 내용을 종합적으로 분석한 결과, 개별 맞춤 접근이 필요하며 구체적인 우려사항을 정확히 파악한 후 맞춤형 솔루션을 제시하는 것이 중요합니다.`;
+          } else {
+            insight = `기타 사유로 인한 반응입니다. 개별 맞춤 접근이 필요하며, 구체적인 우려사항을 정확히 파악한 후 맞춤형 솔루션을 제시하는 것이 중요합니다.`;
+          }
+        }
       }
 
       insightsByReason[reason] = insight;
     });
 
-    // 전체 인사이트 요약 (더 구체적으로)
+    // 전체 인사이트 요약 (결과+사유+내용 종합 분석)
     const totalContents = contents.length;
+    
+    // 결과와 내용을 함께 분석하여 긍정/부정 판단
     const positiveReactions = contents.filter((c) => {
       const text = c.content.toLowerCase();
-      return sentimentKeywords.positive.some((kw) => text.includes(kw));
+      const result = (c.result || '').toLowerCase();
+      
+      // 결과가 긍정적이거나, 내용에 긍정 키워드가 있거나, 시간/일정 관련이 있으면 긍정
+      const hasPositiveResult = result.includes('입점') || result.includes('신규') || result.includes('승인');
+      const hasPositiveContent = sentimentKeywords.positive.some((kw) => text.includes(kw));
+      const hasTimeline = sentimentKeywords.timeline.some((kw) => text.includes(kw)) ||
+        /(\d+월|월초|월말|예정|준비|공사|작업|진행|완료|오픈|시작|개장|입점)/.test(text);
+      const isReviewWithTimeline = (result.includes('검토') || result.includes('재연락') || result.includes('대기')) && hasTimeline;
+      
+      return hasPositiveResult || (hasPositiveContent && !sentimentKeywords.negative.some((kw) => text.includes(kw))) || isReviewWithTimeline;
     }).length;
 
     const negativeReactions = contents.filter((c) => {
       const text = c.content.toLowerCase();
-      return sentimentKeywords.negative.some((kw) => text.includes(kw));
+      const result = (c.result || '').toLowerCase();
+      
+      // 결과가 부정적이거나, 내용에 부정 키워드가 있고 긍정적 신호가 없으면 부정
+      const hasNegativeResult = result.includes('거절') || result.includes('불가');
+      const hasNegativeContent = sentimentKeywords.negative.some((kw) => text.includes(kw));
+      const hasPositiveContent = sentimentKeywords.positive.some((kw) => text.includes(kw));
+      const hasTimeline = sentimentKeywords.timeline.some((kw) => text.includes(kw));
+      
+      return hasNegativeResult || (hasNegativeContent && !hasPositiveContent && !hasTimeline);
     }).length;
 
     const neutralReactions = totalContents - positiveReactions - negativeReactions;
@@ -588,8 +720,8 @@ export default function SalesDashboard() {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-2 sm:p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* 헤더 */}
-        <header className="mb-8">
-          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+        <header className="mb-4 sm:mb-6 md:mb-8">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-5 md:p-6 border border-gray-100">
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
               고캠핑 DB 영업 현황 대시보드
             </h1>
@@ -614,9 +746,9 @@ export default function SalesDashboard() {
         </header>
 
         {/* 필터 및 검색 */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <span className="text-2xl">🔍</span> 필터 및 검색
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6 border border-gray-100">
+          <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
+            <span className="text-xl sm:text-2xl">🔍</span> 필터 및 검색
           </h2>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -723,11 +855,11 @@ export default function SalesDashboard() {
         </div>
 
         {/* 성과급 대상자 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {topPerformers.map((performer, index) => (
             <div
               key={performer.name}
-              className={`bg-white rounded-2xl shadow-xl p-6 border-2 transform hover:scale-105 transition-all ${
+              className={`bg-white rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 border-2 transform hover:scale-105 transition-all ${
                 index === 0 
                   ? 'border-yellow-400 bg-gradient-to-br from-yellow-50 to-yellow-100' 
                   : index === 1 
@@ -735,28 +867,28 @@ export default function SalesDashboard() {
                   : 'border-gray-200'
               }`}
             >
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-4xl font-bold">
-                  {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'} {performer.rank}위
+              <div className="flex items-center justify-between mb-3 sm:mb-4">
+                <div className="text-2xl sm:text-4xl font-bold">
+                  {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'} <span className="text-lg sm:text-2xl">{performer.rank}위</span>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-gray-600">MD</div>
-                  <div className="text-xl font-bold">{performer.name}</div>
+                  <div className="text-xs sm:text-sm text-gray-600">MD</div>
+                  <div className="text-base sm:text-xl font-bold break-words">{performer.name}</div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 mt-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4">
                 <div>
-                  <div className="text-sm text-gray-600">입점(신규)</div>
-                  <div className="text-2xl font-bold text-green-600">{performer.newEntry}건</div>
+                  <div className="text-xs sm:text-sm text-gray-600">입점(신규)</div>
+                  <div className="text-xl sm:text-2xl font-bold text-green-600">{performer.newEntry}건</div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-600">컨택 수</div>
-                  <div className="text-2xl font-bold">{performer.contacts}건</div>
+                  <div className="text-xs sm:text-sm text-gray-600">컨택 수</div>
+                  <div className="text-xl sm:text-2xl font-bold">{performer.contacts}건</div>
                 </div>
               </div>
-              <div className="mt-4">
-                <div className="text-sm text-gray-600">전환율</div>
-                <div className="text-xl font-bold">{performer.conversionRate}%</div>
+              <div className="mt-3 sm:mt-4">
+                <div className="text-xs sm:text-sm text-gray-600">전환율</div>
+                <div className="text-lg sm:text-xl font-bold">{performer.conversionRate}%</div>
               </div>
             </div>
           ))}
@@ -767,9 +899,9 @@ export default function SalesDashboard() {
           <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
             <span className="text-xl sm:text-2xl">📍</span> 지역별 캠핑장 현황
           </h2>
-          <div className="h-64 sm:h-80 mb-4 sm:mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-2 sm:p-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={regionData}>
+          <div className="w-full h-64 sm:h-80 mb-4 sm:mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-2 sm:p-4 overflow-hidden">
+            <ResponsiveContainer width="100%" height="100%" minHeight={256}>
+              <BarChart data={regionData} margin={{ top: 5, right: 5, left: 5, bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
                 <XAxis 
                   dataKey="name" 
@@ -777,57 +909,61 @@ export default function SalesDashboard() {
                   textAnchor="end" 
                   height={80}
                   stroke="#64748b"
-                  tick={{ fontSize: 10 }}
+                  tick={{ fontSize: 9 }}
+                  interval={0}
                 />
-                <YAxis stroke="#64748b" tick={{ fontSize: 10 }} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 10 }} width={40} />
                 <Tooltip 
                   contentStyle={{ 
                     backgroundColor: 'white', 
                     border: '1px solid #e0e7ff',
                     borderRadius: '8px',
                     boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                    fontSize: '12px'
+                    fontSize: '11px',
+                    padding: '8px'
                   }} 
                 />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Bar dataKey="value" fill="#4f46e5" name="캠핑장 수" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="bg-gray-50 rounded-xl p-4">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-800">지역별 상세 현황 (TOP 10)</h3>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 mb-3 sm:mb-4">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-800">지역별 상세 현황 (TOP 10)</h3>
               {districtData.length > 10 && (
                 <button
                   onClick={() => setShowAllDistricts(!showAllDistricts)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-sm"
+                  className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-xs sm:text-sm whitespace-nowrap"
                 >
                   {showAllDistricts ? '접기' : '자세히 보기'}
                 </button>
               )}
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-                    <th className="px-4 py-3 text-left rounded-tl-lg">지역(광역)</th>
-                    <th className="px-4 py-3 text-left">지역(시/군/리)</th>
-                    <th className="px-4 py-3 text-right rounded-tr-lg">건수</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(showAllDistricts ? districtData : districtData.slice(0, 10)).map((item, index) => (
-                    <tr 
-                      key={index} 
-                      className="border-b hover:bg-blue-50 transition-colors"
-                    >
-                      <td className="px-4 py-3 font-medium">{item.region}</td>
-                      <td className="px-4 py-3">{item.name}</td>
-                      <td className="px-4 py-3 text-right font-semibold text-blue-600">{item.count}</td>
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <table className="min-w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg whitespace-nowrap">지역(광역)</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left whitespace-nowrap">지역(시/군/리)</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right rounded-tr-lg whitespace-nowrap">건수</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(showAllDistricts ? districtData : districtData.slice(0, 10)).map((item, index) => (
+                      <tr 
+                        key={index} 
+                        className="border-b hover:bg-blue-50 transition-colors"
+                      >
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 font-medium text-xs sm:text-sm">{item.region}</td>
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm">{item.name}</td>
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-right font-semibold text-blue-600 text-xs sm:text-sm">{item.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -838,16 +974,19 @@ export default function SalesDashboard() {
             <span className="text-xl sm:text-2xl">👥</span> MD별 컨택 현황
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-            <div className="h-64 sm:h-80">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full h-64 sm:h-80 min-h-[256px]">
+              <ResponsiveContainer width="100%" height="100%" minHeight={256}>
                 <PieChart>
                   <Pie
                     data={mdData}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={60}
+                    label={({ name, percent }) => {
+                      const label = `${name}: ${(percent * 100).toFixed(0)}%`;
+                      return label.length > 15 ? `${name.substring(0, 8)}...` : label;
+                    }}
+                    outerRadius={typeof window !== 'undefined' && window.innerWidth < 640 ? 50 : 60}
                     fill="#8884d8"
                     dataKey="value"
                   >
@@ -855,37 +994,47 @@ export default function SalesDashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ fontSize: '12px' }} />
+                  <Tooltip 
+                    contentStyle={{ 
+                      fontSize: '11px',
+                      padding: '8px',
+                      backgroundColor: 'white',
+                      border: '1px solid #e0e7ff',
+                      borderRadius: '8px'
+                    }} 
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
-                    <th className="px-4 py-3 text-left rounded-tl-lg">MD</th>
-                    <th className="px-4 py-3 text-right">컨택 수</th>
-                    <th className="px-4 py-3 text-right rounded-tr-lg">비율</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mdData.map((item, index) => {
-                    const total = mdData.reduce((sum, d) => sum + d.value, 0);
-                    const percentage = ((item.value / total) * 100).toFixed(1);
-                    return (
-                      <tr key={index} className="border-b hover:bg-indigo-50 transition-colors">
-                        <td className="px-4 py-3 font-medium">{item.name}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-indigo-600">{item.value}</td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">
-                            {percentage}%
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <table className="min-w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg whitespace-nowrap">MD</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right whitespace-nowrap">컨택 수</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right rounded-tr-lg whitespace-nowrap">비율</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mdData.map((item, index) => {
+                      const total = mdData.reduce((sum, d) => sum + d.value, 0);
+                      const percentage = ((item.value / total) * 100).toFixed(1);
+                      return (
+                        <tr key={index} className="border-b hover:bg-indigo-50 transition-colors">
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 font-medium text-xs sm:text-sm truncate max-w-[120px]">{item.name}</td>
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 text-right font-semibold text-indigo-600 text-xs sm:text-sm">{item.value}</td>
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 text-right">
+                            <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium whitespace-nowrap">
+                              {percentage}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -896,15 +1045,15 @@ export default function SalesDashboard() {
             <span className="text-xl sm:text-2xl">📈</span> 컨택 결과 분석
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="h-64 sm:h-80">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="w-full h-64 sm:h-80 min-h-[256px]">
+              <ResponsiveContainer width="100%" height="100%" minHeight={256}>
                 <PieChart>
                   <Pie
                     data={resultData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={45}
-                    outerRadius={60}
+                    innerRadius={typeof window !== 'undefined' && window.innerWidth < 640 ? 35 : 45}
+                    outerRadius={typeof window !== 'undefined' && window.innerWidth < 640 ? 50 : 60}
                     paddingAngle={5}
                     dataKey="value"
                   >
@@ -912,38 +1061,48 @@ export default function SalesDashboard() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ fontSize: '12px' }} />
-                  <Legend wrapperStyle={{ fontSize: '12px' }} />
+                  <Tooltip 
+                    contentStyle={{ 
+                      fontSize: '11px',
+                      padding: '8px',
+                      backgroundColor: 'white',
+                      border: '1px solid #e0e7ff',
+                      borderRadius: '8px'
+                    }} 
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px' }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
-                    <th className="px-4 py-3 text-left rounded-tl-lg">결과</th>
-                    <th className="px-4 py-3 text-right">건수</th>
-                    <th className="px-4 py-3 text-right rounded-tr-lg">비율</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resultData.map((item, index) => {
-                    const total = resultData.reduce((sum, d) => sum + d.value, 0);
-                    const percentage = ((item.value / total) * 100).toFixed(1);
-                    return (
-                      <tr key={index} className="border-b hover:bg-green-50 transition-colors">
-                        <td className="px-4 py-3 font-medium">{item.name}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-green-600">{item.value}</td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
-                            {percentage}%
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <table className="min-w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg whitespace-nowrap">결과</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right whitespace-nowrap">건수</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right rounded-tr-lg whitespace-nowrap">비율</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultData.map((item, index) => {
+                      const total = resultData.reduce((sum, d) => sum + d.value, 0);
+                      const percentage = ((item.value / total) * 100).toFixed(1);
+                      return (
+                        <tr key={index} className="border-b hover:bg-green-50 transition-colors">
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 font-medium text-xs sm:text-sm">{item.name}</td>
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 text-right font-semibold text-green-600 text-xs sm:text-sm">{item.value}</td>
+                          <td className="px-2 sm:px-4 py-2 sm:py-3 text-right">
+                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium whitespace-nowrap">
+                              {percentage}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -954,33 +1113,35 @@ export default function SalesDashboard() {
             <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
               <span className="text-xl sm:text-2xl">⚠️</span> 거절/미진행 사유 분석
             </h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gradient-to-r from-red-600 to-pink-600 text-white">
-                    <th className="px-4 py-3 text-left rounded-tl-lg">순위</th>
-                    <th className="px-4 py-3 text-left">사유</th>
-                    <th className="px-4 py-3 text-right rounded-tr-lg">건수</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rejectionReasons.map((item, index) => (
-                    <tr key={index} className="border-b hover:bg-red-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                          index === 0 ? 'bg-yellow-400 text-yellow-900' :
-                          index === 1 ? 'bg-gray-300 text-gray-900' :
-                          'bg-gray-200 text-gray-700'
-                        }`}>
-                          {index + 1}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-medium">{item.name}</td>
-                      <td className="px-4 py-3 text-right font-semibold text-red-600">{item.value}</td>
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <table className="min-w-full text-xs sm:text-sm">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-red-600 to-pink-600 text-white">
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg whitespace-nowrap">순위</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-left whitespace-nowrap">사유</th>
+                      <th className="px-2 sm:px-4 py-2 sm:py-3 text-right rounded-tr-lg whitespace-nowrap">건수</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rejectionReasons.map((item, index) => (
+                      <tr key={index} className="border-b hover:bg-red-50 transition-colors">
+                        <td className="px-2 sm:px-4 py-2 sm:py-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold whitespace-nowrap ${
+                            index === 0 ? 'bg-yellow-400 text-yellow-900' :
+                            index === 1 ? 'bg-gray-300 text-gray-900' :
+                            'bg-gray-200 text-gray-700'
+                          }`}>
+                            {index + 1}
+                          </span>
+                        </td>
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 font-medium text-xs sm:text-sm break-words">{item.name}</td>
+                        <td className="px-2 sm:px-4 py-2 sm:py-3 text-right font-semibold text-red-600 text-xs sm:text-sm">{item.value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -990,62 +1151,64 @@ export default function SalesDashboard() {
           <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
             <span className="text-xl sm:text-2xl">🏆</span> MD 성과 순위 (입점 신규 기준)
           </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-500 text-white">
-                  <th className="px-4 py-3 text-center rounded-tl-lg">순위</th>
-                  <th className="px-4 py-3 text-left">MD</th>
-                  <th className="px-4 py-3 text-right">입점(신규)</th>
-                  <th className="px-4 py-3 text-right">컨택 수</th>
-                  <th className="px-4 py-3 text-right rounded-tr-lg">전환율</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mdRanking.map((item) => (
-                  <tr
-                    key={item.name}
-                    className={`border-b transition-colors ${
-                      item.rank === 1 
-                        ? 'bg-gradient-to-r from-yellow-50 to-amber-50 hover:from-yellow-100 hover:to-amber-100 font-bold' 
-                        : item.rank === 2 
-                        ? 'bg-gradient-to-r from-gray-50 to-slate-50 hover:from-gray-100 hover:to-slate-100 font-semibold' 
-                        : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <td className="px-4 py-3 text-center">
-                      <span className="text-xl">
-                        {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : item.rank}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-medium">{item.name}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full font-semibold">
-                        {item.newEntry}건
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium">{item.contacts}건</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full font-semibold">
-                        {item.conversionRate}%
-                      </span>
-                    </td>
+          <div className="overflow-x-auto -mx-2 sm:mx-0">
+            <div className="inline-block min-w-full align-middle">
+              <table className="min-w-full text-xs sm:text-sm">
+                <thead>
+                  <tr className="bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-500 text-white">
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-center rounded-tl-lg whitespace-nowrap">순위</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left whitespace-nowrap">MD</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-right whitespace-nowrap">입점(신규)</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-right whitespace-nowrap">컨택 수</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-right rounded-tr-lg whitespace-nowrap">전환율</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {mdRanking.map((item) => (
+                    <tr
+                      key={item.name}
+                      className={`border-b transition-colors ${
+                        item.rank === 1 
+                          ? 'bg-gradient-to-r from-yellow-50 to-amber-50 hover:from-yellow-100 hover:to-amber-100 font-bold' 
+                          : item.rank === 2 
+                          ? 'bg-gradient-to-r from-gray-50 to-slate-50 hover:from-gray-100 hover:to-slate-100 font-semibold' 
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-center">
+                        <span className="text-base sm:text-xl">
+                          {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : item.rank}
+                        </span>
+                      </td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 font-medium text-xs sm:text-sm truncate max-w-[100px] sm:max-w-none">{item.name}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-right">
+                        <span className="px-2 sm:px-3 py-1 bg-green-100 text-green-700 rounded-full font-semibold text-xs sm:text-sm whitespace-nowrap">
+                          {item.newEntry}건
+                        </span>
+                      </td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-right font-medium text-xs sm:text-sm">{item.contacts}건</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-right">
+                        <span className="px-2 sm:px-3 py-1 bg-blue-100 text-blue-700 rounded-full font-semibold text-xs sm:text-sm whitespace-nowrap">
+                          {item.conversionRate}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
         {/* AI 분석 섹션 - 더 디테일하게 */}
         {aiAnalysis && (
-          <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 rounded-2xl shadow-xl p-4 sm:p-6 mb-6 sm:mb-8 border border-purple-100">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6 gap-2">
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-800 flex items-center gap-2">
-                <span className="text-xl sm:text-2xl">🤖</span> AI 데이터 분석 요약
+          <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 md:p-6 mb-6 sm:mb-8 border border-purple-100">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-3 sm:mb-4 md:mb-6 gap-2">
+              <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <span className="text-lg sm:text-xl md:text-2xl">🤖</span> AI 데이터 분석 요약
               </h2>
               {aiAnalysis.analysisTime && (
-                <span className="text-xs sm:text-sm text-gray-500">분석 시간: {aiAnalysis.analysisTime}</span>
+                <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">분석 시간: {aiAnalysis.analysisTime}</span>
               )}
             </div>
             {analyzing ? (
@@ -1054,21 +1217,21 @@ export default function SalesDashboard() {
                 <p className="mt-4 text-gray-600">분석 중...</p>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4 sm:space-y-6">
                 {/* 첫 번째 행: 결과 분석, 사유 분석, 키워드 */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
                   {/* 결과 분석 */}
-                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                      <span className="text-lg sm:text-xl">📊</span> 결과 분석
+                  <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                    <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                      <span className="text-base sm:text-lg md:text-xl">📊</span> 결과 분석
                     </h3>
-                    <div className="space-y-2 sm:space-y-3 max-h-64 overflow-y-auto">
+                    <div className="space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
                       {aiAnalysis.resultSummary.map((item: any, index: number) => (
-                        <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
-                          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate flex-1">{item.result}</span>
-                          <div className="flex items-center gap-1 sm:gap-2 ml-2">
-                            <span className="text-xs sm:text-sm font-semibold text-gray-900">{item.count}건</span>
-                            <span className="text-xs text-gray-500">({item.percentage}%)</span>
+                        <div key={index} className="flex justify-between items-center p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                          <span className="text-xs sm:text-sm font-medium text-gray-700 truncate flex-1 min-w-0">{item.result}</span>
+                          <div className="flex items-center gap-1 sm:gap-2 ml-2 flex-shrink-0">
+                            <span className="text-xs sm:text-sm font-semibold text-gray-900 whitespace-nowrap">{item.count}건</span>
+                            <span className="text-xs text-gray-500 whitespace-nowrap">({item.percentage}%)</span>
                           </div>
                         </div>
                       ))}
@@ -1076,20 +1239,20 @@ export default function SalesDashboard() {
                   </div>
 
                   {/* 사유 분석 */}
-                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                      <span className="text-lg sm:text-xl">💬</span> 주요 사유 (TOP 10)
+                  <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                    <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                      <span className="text-base sm:text-lg md:text-xl">💬</span> 주요 사유 (TOP 10)
                     </h3>
-                    <div className="space-y-2 sm:space-y-3 max-h-64 overflow-y-auto">
+                    <div className="space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
                       {aiAnalysis.topReasons.slice(0, 10).map((item: any, index: number) => (
-                        <div key={index} className="p-2 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-bold text-purple-600">#{index + 1}</span>
-                            <div className="text-xs sm:text-sm font-medium text-gray-700 line-clamp-2 flex-1">{item.reason}</div>
+                        <div key={index} className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                          <div className="flex items-center gap-1 sm:gap-2 mb-1">
+                            <span className="text-xs font-bold text-purple-600 flex-shrink-0">#{index + 1}</span>
+                            <div className="text-xs sm:text-sm font-medium text-gray-700 line-clamp-2 flex-1 min-w-0 break-words">{item.reason}</div>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">{item.count}회</span>
-                            <span className="text-xs text-gray-400">({item.percentage}%)</span>
+                            <span className="text-xs text-gray-500 whitespace-nowrap">{item.count}회</span>
+                            <span className="text-xs text-gray-400 whitespace-nowrap">({item.percentage}%)</span>
                           </div>
                         </div>
                       ))}
@@ -1097,28 +1260,28 @@ export default function SalesDashboard() {
                   </div>
 
                   {/* 내용 키워드 분석 */}
-                  <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                    <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                      <span className="text-lg sm:text-xl">🔑</span> 내용 키워드
+                  <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                    <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                      <span className="text-base sm:text-lg md:text-xl">🔑</span> 내용 키워드
                     </h3>
-                    <div className="flex flex-wrap gap-2 mb-4">
+                    <div className="flex flex-wrap gap-1.5 sm:gap-2 mb-3 sm:mb-4">
                       {Object.entries(aiAnalysis.phraseCounts)
                         .sort((a: any, b: any) => b[1] - a[1])
                         .slice(0, 12)
                         .map(([phrase, count]: any, index: number) => (
                           <span
                             key={index}
-                            className="px-2 sm:px-3 py-1 bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700 rounded-full text-xs font-medium"
+                            className="px-2 sm:px-3 py-0.5 sm:py-1 bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700 rounded-full text-xs font-medium whitespace-nowrap"
                           >
                             {phrase} ({count})
                           </span>
                         ))}
                     </div>
-                    <div className="pt-3 border-t border-gray-200">
-                      <div className="text-xs text-gray-600 space-y-1">
-                        <div>📊 분석 대상: {aiAnalysis.totalAnalyzed}개</div>
-                        <div>💬 사유 포함: {aiAnalysis.hasReasons}개</div>
-                        <div>📝 내용 포함: {aiAnalysis.hasContents}개</div>
+                    <div className="pt-2 sm:pt-3 border-t border-gray-200">
+                      <div className="text-xs text-gray-600 space-y-0.5 sm:space-y-1">
+                        <div className="break-words">📊 분석 대상: {aiAnalysis.totalAnalyzed}개</div>
+                        <div className="break-words">💬 사유 포함: {aiAnalysis.hasReasons}개</div>
+                        <div className="break-words">📝 내용 포함: {aiAnalysis.hasContents}개</div>
                       </div>
                     </div>
                   </div>
@@ -1126,19 +1289,19 @@ export default function SalesDashboard() {
 
                 {/* 두 번째 행: 사유 카테고리, MD 성과, 지역 성과 */}
                 {aiAnalysis.reasonCategories && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
                     {/* 사유 카테고리 분석 */}
-                    <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                      <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                        <span className="text-lg sm:text-xl">📂</span> 사유 카테고리
+                    <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                      <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                        <span className="text-base sm:text-lg md:text-xl">📂</span> 사유 카테고리
                       </h3>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5 sm:space-y-2">
                         {Object.entries(aiAnalysis.reasonCategories)
                           .sort((a: any, b: any) => b[1] - a[1])
                           .map(([category, count]: any, index: number) => (
-                            <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
-                              <span className="text-xs sm:text-sm font-medium text-gray-700">{category}</span>
-                              <span className="text-xs sm:text-sm font-semibold text-gray-900">{count}건</span>
+                            <div key={index} className="flex justify-between items-center p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                              <span className="text-xs sm:text-sm font-medium text-gray-700 break-words flex-1">{category}</span>
+                              <span className="text-xs sm:text-sm font-semibold text-gray-900 ml-2 whitespace-nowrap flex-shrink-0">{count}건</span>
                             </div>
                           ))}
                       </div>
@@ -1146,17 +1309,17 @@ export default function SalesDashboard() {
 
                     {/* MD 성과 분석 */}
                     {aiAnalysis.mdPerformance && aiAnalysis.mdPerformance.length > 0 && (
-                      <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                        <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                          <span className="text-lg sm:text-xl">👥</span> MD 성과 분석 (TOP 5)
+                      <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                        <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                          <span className="text-base sm:text-lg md:text-xl">👥</span> MD 성과 분석 (TOP 5)
                         </h3>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                        <div className="space-y-1.5 sm:space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
                           {aiAnalysis.mdPerformance.slice(0, 5).map((item: any, index: number) => (
-                            <div key={index} className="p-2 bg-gray-50 rounded-lg">
-                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1">{item.md}</div>
-                              <div className="flex justify-between text-xs text-gray-600">
-                                <span>입점: {item.newEntry}건</span>
-                                <span>전환율: {item.conversionRate}%</span>
+                            <div key={index} className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1 break-words">{item.md}</div>
+                              <div className="flex justify-between text-xs text-gray-600 gap-2">
+                                <span className="whitespace-nowrap">입점: {item.newEntry}건</span>
+                                <span className="whitespace-nowrap">전환율: {item.conversionRate}%</span>
                               </div>
                             </div>
                           ))}
@@ -1166,17 +1329,17 @@ export default function SalesDashboard() {
 
                     {/* 지역 성과 분석 */}
                     {aiAnalysis.regionPerformance && aiAnalysis.regionPerformance.length > 0 && (
-                      <div className="bg-white rounded-xl p-4 sm:p-5 shadow-md">
-                        <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 sm:mb-4 flex items-center gap-2">
-                          <span className="text-lg sm:text-xl">📍</span> 지역 성과 분석 (TOP 5)
+                      <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md">
+                        <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 md:mb-4 flex items-center gap-2">
+                          <span className="text-base sm:text-lg md:text-xl">📍</span> 지역 성과 분석 (TOP 5)
                         </h3>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                        <div className="space-y-1.5 sm:space-y-2 max-h-48 sm:max-h-64 overflow-y-auto">
                           {aiAnalysis.regionPerformance.slice(0, 5).map((item: any, index: number) => (
-                            <div key={index} className="p-2 bg-gray-50 rounded-lg">
-                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1">{item.region}</div>
-                              <div className="flex justify-between text-xs text-gray-600">
-                                <span>입점: {item.newEntry}건</span>
-                                <span>전환율: {item.conversionRate}%</span>
+                            <div key={index} className="p-1.5 sm:p-2 bg-gray-50 rounded-lg">
+                              <div className="text-xs sm:text-sm font-semibold text-gray-800 mb-1 break-words">{item.region}</div>
+                              <div className="flex justify-between text-xs text-gray-600 gap-2">
+                                <span className="whitespace-nowrap">입점: {item.newEntry}건</span>
+                                <span className="whitespace-nowrap">전환율: {item.conversionRate}%</span>
                               </div>
                             </div>
                           ))}
@@ -1192,37 +1355,38 @@ export default function SalesDashboard() {
 
         {/* 영업 인사이트 섹션 */}
         {insights && (
-          <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 mb-6 sm:mb-8 border border-amber-100">
-            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
-              <span className="text-xl sm:text-2xl">💡</span> 영업 인사이트 (사장님 반응 분석)
+          <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-xl sm:rounded-2xl shadow-xl p-3 sm:p-4 md:p-6 mb-6 sm:mb-8 border border-amber-100">
+            <h2 className="text-lg sm:text-xl md:text-2xl font-bold text-gray-800 mb-3 sm:mb-4 md:mb-6 flex items-center gap-2">
+              <span className="text-lg sm:text-xl md:text-2xl">💡</span> 영업 인사이트 (사장님 반응 분석)
             </h2>
             
             {/* 전체 인사이트 */}
-            <div className="bg-white rounded-xl p-4 sm:p-5 mb-4 sm:mb-6 shadow-md border-l-4 border-amber-500">
-              <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
-                <span className="text-lg">📈</span> 전체 요약
+            <div className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 mb-3 sm:mb-4 md:mb-6 shadow-md border-l-4 border-amber-500">
+              <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 flex items-center gap-2">
+                <span className="text-base sm:text-lg">📈</span> 전체 요약
               </h3>
-              <p className="text-sm sm:text-base text-gray-700 leading-relaxed">
+              <p className="text-xs sm:text-sm md:text-base text-gray-700 leading-relaxed break-words">
                 {insights.overallInsight}
               </p>
             </div>
 
             {/* 사유별 인사이트 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
               {insights.reasonStats
                 .filter((stat: any) => stat.count > 0)
                 .map((stat: any, index: number) => (
-                  <div key={index} className="bg-white rounded-xl p-4 sm:p-5 shadow-md hover:shadow-lg transition-shadow">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-base sm:text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <span className="text-lg">🏷️</span> {stat.reason}
+                  <div key={index} className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md hover:shadow-lg transition-shadow">
+                    <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+                      <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 flex items-center gap-1 sm:gap-2 flex-1 min-w-0">
+                        <span className="text-base sm:text-lg flex-shrink-0">🏷️</span> 
+                        <span className="break-words">{stat.reason}</span>
                       </h3>
-                      <span className="px-2 sm:px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs sm:text-sm font-semibold">
+                      <span className="px-2 sm:px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap flex-shrink-0">
                         {stat.count}건
                       </span>
                     </div>
                     {stat.insight && (
-                      <p className="text-xs sm:text-sm text-gray-700 leading-relaxed line-clamp-3">
+                      <p className="text-xs sm:text-sm text-gray-700 leading-relaxed line-clamp-3 break-words">
                         {stat.insight}
                       </p>
                     )}
@@ -1231,10 +1395,10 @@ export default function SalesDashboard() {
             </div>
 
             {/* 분석 통계 */}
-            <div className="mt-4 sm:mt-6 pt-4 border-t border-amber-200">
-              <div className="text-xs sm:text-sm text-gray-600 flex flex-wrap gap-4">
-                <span>📊 분석된 피드백: {insights.totalAnalyzed}건</span>
-                <span>🏷️ 사유 분류: {insights.reasonStats.filter((s: any) => s.count > 0).length}개</span>
+            <div className="mt-3 sm:mt-4 md:mt-6 pt-3 sm:pt-4 border-t border-amber-200">
+              <div className="text-xs sm:text-sm text-gray-600 flex flex-wrap gap-2 sm:gap-4">
+                <span className="break-words">📊 분석된 피드백: {insights.totalAnalyzed}건</span>
+                <span className="break-words">🏷️ 사유 분류: {insights.reasonStats.filter((s: any) => s.count > 0).length}개</span>
               </div>
             </div>
           </div>
@@ -1245,50 +1409,52 @@ export default function SalesDashboard() {
           <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
             <span className="text-xl sm:text-2xl">📋</span> 캠핑장 목록 ({filteredData.length.toLocaleString()}개)
           </h2>
-          <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-xs sm:text-sm">
-              <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0">
-                <tr>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg">번호</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">캠핑장명</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden sm:table-cell">지역(광역)</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden md:table-cell">지역(시/군/리)</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden lg:table-cell">컨택MD</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left">결과</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-center rounded-tr-lg">상세</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredData.map((item) => (
-                  <tr key={item.id} className="border-b hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 transition-colors">
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 text-gray-600">{item.id}</td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 font-semibold text-gray-900 text-xs sm:text-sm">{item['캠핑장명'] || '-'}</td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden sm:table-cell">{item['지역(광역)'] || '-'}</td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden md:table-cell">{item['지역(시/군/리)'] || '-'}</td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 hidden lg:table-cell">{item['컨택MD'] || '-'}</td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        item['결과'] === '입점(신규)' 
-                          ? 'bg-green-100 text-green-700' 
-                          : item['결과'] === '거절'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-gray-100 text-gray-700'
-                      }`}>
-                        {item['결과'] || '-'}
-                      </span>
-                    </td>
-                    <td className="px-2 sm:px-4 py-2 sm:py-3 text-center">
-                      <button
-                        onClick={() => setSelectedItem(item)}
-                        className="px-2 sm:px-4 py-1 sm:py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition text-xs font-medium shadow-sm whitespace-nowrap"
-                      >
-                        상세보기
-                      </button>
-                    </td>
+          <div className="overflow-x-auto -mx-2 sm:mx-0 max-h-96 overflow-y-auto">
+            <div className="inline-block min-w-full align-middle">
+              <table className="min-w-full text-xs sm:text-sm">
+                <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-10">
+                  <tr>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left rounded-tl-lg whitespace-nowrap">번호</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left whitespace-nowrap min-w-[120px]">캠핑장명</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden sm:table-cell whitespace-nowrap">지역(광역)</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden md:table-cell whitespace-nowrap">지역(시/군/리)</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left hidden lg:table-cell whitespace-nowrap">컨택MD</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-left whitespace-nowrap">결과</th>
+                    <th className="px-2 sm:px-4 py-2 sm:py-3 text-center rounded-tr-lg whitespace-nowrap">상세</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredData.map((item) => (
+                    <tr key={item.id} className="border-b hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 transition-colors">
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-gray-600 text-xs sm:text-sm">{item.id}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 font-semibold text-gray-900 text-xs sm:text-sm break-words">{item['캠핑장명'] || '-'}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 hidden sm:table-cell text-xs sm:text-sm">{item['지역(광역)'] || '-'}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 hidden md:table-cell text-xs sm:text-sm">{item['지역(시/군/리)'] || '-'}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 hidden lg:table-cell text-xs sm:text-sm">{item['컨택MD'] || '-'}</td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
+                          item['결과'] === '입점(신규)' 
+                            ? 'bg-green-100 text-green-700' 
+                            : item['결과'] === '거절'
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-gray-100 text-gray-700'
+                        }`}>
+                          {item['결과'] || '-'}
+                        </span>
+                      </td>
+                      <td className="px-2 sm:px-4 py-2 sm:py-3 text-center">
+                        <button
+                          onClick={() => setSelectedItem(item)}
+                          className="px-2 sm:px-4 py-1 sm:py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition text-xs font-medium shadow-sm whitespace-nowrap"
+                        >
+                          상세보기
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
