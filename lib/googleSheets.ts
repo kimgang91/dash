@@ -2,24 +2,40 @@ import { google } from 'googleapis';
 
 // Google Sheets API 클라이언트 초기화
 function getSheetsClient() {
-  // 환경변수 검증
-  const clientEmail = process.env.GOOGLE_SHEETS_CLIENT_EMAIL;
-  const privateKey = process.env.GOOGLE_SHEETS_PRIVATE_KEY;
+  // 1) 환경변수 이름 매핑 (둘 중 아무거나 있어도 동작하게)
+  const clientEmail =
+    process.env.GOOGLE_SHEETS_CLIENT_EMAIL || process.env.CLIENT_EMAIL;
+  let privateKey =
+    process.env.GOOGLE_SHEETS_PRIVATE_KEY || process.env.PRIVATE_KEY;
 
   if (!clientEmail) {
-    throw new Error('GOOGLE_SHEETS_CLIENT_EMAIL 환경변수가 설정되지 않았습니다. Vercel 환경변수 설정을 확인해주세요.');
+    throw new Error(
+      'Google 서비스 계정 이메일 환경변수가 없습니다. Vercel에서 GOOGLE_SHEETS_CLIENT_EMAIL 또는 CLIENT_EMAIL 이름으로 설정해주세요.'
+    );
   }
 
   if (!privateKey) {
-    throw new Error('GOOGLE_SHEETS_PRIVATE_KEY 환경변수가 설정되지 않았습니다. Vercel 환경변수 설정을 확인해주세요.');
+    throw new Error(
+      'Google 서비스 계정 Private Key 환경변수가 없습니다. Vercel에서 GOOGLE_SHEETS_PRIVATE_KEY 또는 PRIVATE_KEY 이름으로 설정해주세요.'
+    );
   }
 
-  // Private Key에서 \n을 실제 줄바꿈으로 변환
+  // 2) Private Key 문자열 정리
+  privateKey = privateKey.trim();
+
+  // 양 끝에 " 로 둘러싸여 있으면 제거 (JSON에서 그대로 붙여넣은 경우)
+  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+    privateKey = privateKey.slice(1, -1);
+  }
+
+  // JSON에서 온 \n 을 실제 줄바꿈으로 변환
   const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
 
   // Private Key 형식 검증
   if (!formattedPrivateKey.includes('BEGIN PRIVATE KEY')) {
-    throw new Error('GOOGLE_SHEETS_PRIVATE_KEY 형식이 올바르지 않습니다. Private Key 전체를 복사했는지 확인해주세요.');
+    throw new Error(
+      'Google Private Key 형식이 올바르지 않습니다. BEGIN/END PRIVATE KEY 구간 전체를 복사했는지 확인해주세요.'
+    );
   }
 
   const auth = new google.auth.GoogleAuth({
