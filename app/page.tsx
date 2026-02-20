@@ -43,6 +43,8 @@ export default function SalesDashboard() {
     reason: '',
   });
   const [insights, setInsights] = useState<any>(null);
+  const [expandedInsight, setExpandedInsight] = useState<string | null>(null); // 확장된 인사이트 키 (전체 요약: 'overall', 사유별: reason명)
+  const [expandedInsight, setExpandedInsight] = useState<string | null>(null); // 확장된 인사이트 키
 
   useEffect(() => {
     fetchData();
@@ -1471,33 +1473,90 @@ export default function SalesDashboard() {
               <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 mb-2 sm:mb-3 flex items-center gap-2">
                 <span className="text-base sm:text-lg">📈</span> 전체 요약
               </h3>
-              <p className="text-xs sm:text-sm md:text-base text-gray-700 leading-relaxed break-words">
+              <div 
+                className={`text-xs sm:text-sm md:text-base text-gray-700 leading-relaxed break-words cursor-pointer hover:bg-amber-50 p-2 -m-2 rounded transition-colors ${
+                  expandedInsight === 'overall' ? '' : 'line-clamp-4'
+                }`}
+                onClick={() => setExpandedInsight(expandedInsight === 'overall' ? null : 'overall')}
+              >
                 {insights.overallInsight}
-              </p>
+              </div>
+              {insights.overallInsight && insights.overallInsight.length > 150 && (
+                <button
+                  onClick={() => setExpandedInsight(expandedInsight === 'overall' ? null : 'overall')}
+                  className="mt-2 text-xs sm:text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                >
+                  {expandedInsight === 'overall' ? (
+                    <>
+                      <span>접기</span>
+                      <span>▲</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>전체 내용 보기</span>
+                      <span>▼</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* 사유별 인사이트 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
               {insights.reasonStats
                 .filter((stat: any) => stat.count > 0)
-                .map((stat: any, index: number) => (
-                  <div key={index} className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md hover:shadow-lg transition-shadow">
-                    <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
-                      <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 flex items-center gap-1 sm:gap-2 flex-1 min-w-0">
-                        <span className="text-base sm:text-lg flex-shrink-0">🏷️</span> 
-                        <span className="break-words">{stat.reason}</span>
-                      </h3>
-                      <span className="px-2 sm:px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap flex-shrink-0">
-                        {stat.count}건
-                      </span>
+                .map((stat: any, index: number) => {
+                  const insightKey = `reason-${stat.reason}`;
+                  const isExpanded = expandedInsight === insightKey;
+                  const needsExpansion = stat.insight && stat.insight.length > 120;
+                  
+                  return (
+                    <div 
+                      key={index} 
+                      className="bg-white rounded-lg sm:rounded-xl p-3 sm:p-4 md:p-5 shadow-md hover:shadow-lg transition-shadow"
+                    >
+                      <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+                        <h3 className="text-sm sm:text-base md:text-lg font-bold text-gray-800 flex items-center gap-1 sm:gap-2 flex-1 min-w-0">
+                          <span className="text-base sm:text-lg flex-shrink-0">🏷️</span> 
+                          <span className="break-words">{stat.reason}</span>
+                        </h3>
+                        <span className="px-2 sm:px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap flex-shrink-0">
+                          {stat.count}건
+                        </span>
+                      </div>
+                      {stat.insight && (
+                        <div>
+                          <div 
+                            className={`text-xs sm:text-sm text-gray-700 leading-relaxed break-words cursor-pointer hover:bg-amber-50 p-2 -m-2 rounded transition-colors ${
+                              isExpanded ? '' : 'line-clamp-3'
+                            }`}
+                            onClick={() => needsExpansion && setExpandedInsight(isExpanded ? null : insightKey)}
+                          >
+                            {stat.insight}
+                          </div>
+                          {needsExpansion && (
+                            <button
+                              onClick={() => setExpandedInsight(isExpanded ? null : insightKey)}
+                              className="mt-2 text-xs sm:text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                            >
+                              {isExpanded ? (
+                                <>
+                                  <span>접기</span>
+                                  <span>▲</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>전체 내용 보기</span>
+                                  <span>▼</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {stat.insight && (
-                      <p className="text-xs sm:text-sm text-gray-700 leading-relaxed line-clamp-3 break-words">
-                        {stat.insight}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
             </div>
 
             {/* 분석 통계 */}
