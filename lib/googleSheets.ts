@@ -85,12 +85,14 @@ export async function getSalesData() {
 
     console.log(`Total rows fetched: ${rows.length}`);
 
-    // 헤더 찾기 (3번째 행이 헤더)
-    let headerRowIndex = 2;
+    // 헤더 찾기 (3번째 행이 헤더, F열에 "캠핑장명"이 있음)
+    let headerRowIndex = 2; // 기본값: 3행 (인덱스 2)
     for (let i = 0; i < Math.min(5, rows.length); i++) {
       if (rows[i] && rows[i].length > 0) {
         const rowText = rows[i].join(' ');
-        if (rowText.includes('지역') || rowText.includes('컨택') || rowText.includes('결과')) {
+        // 캠핑장명이 F열(인덱스 5)에 있는지 확인
+        const hasCampingName = rows[i][5] && String(rows[i][5]).trim().includes('캠핑장명');
+        if (hasCampingName || rowText.includes('지역') || rowText.includes('컨택') || rowText.includes('결과')) {
           headerRowIndex = i;
           break;
         }
@@ -104,73 +106,62 @@ export async function getSalesData() {
 
     console.log(`Header row: ${headerRowIndex + 1}, Columns: ${headers.length}`);
 
-    // 컬럼 매핑
-    const columnMap: { [key: string]: number } = {
-      '시/도': 2,
-      '시/군/구': 3,
-      '담당 MD': 8,
-      '결과': 10,
-      '사유': 11,
-    };
-
-    // 헤더에서 실제 컬럼명 확인
+    // 모든 헤더를 컬럼명으로 사용
+    const columnMap: { [key: string]: number } = {};
     headers.forEach((header, index) => {
-      const headerLower = header.trim().toLowerCase();
-      if (headerLower.includes('지역') && headerLower.includes('광역')) {
-        columnMap['시/도'] = index;
-      }
-      if (headerLower.includes('지역') && (headerLower.includes('시/군') || headerLower.includes('시군'))) {
-        columnMap['시/군/구'] = index;
-      }
-      if (headerLower.includes('컨택') && headerLower.includes('md')) {
-        columnMap['담당 MD'] = index;
-      }
-      if (headerLower.includes('결과')) {
-        columnMap['결과'] = index;
-      }
-      if (headerLower.includes('사유')) {
-        columnMap['사유'] = index;
+      const headerKey = header.trim();
+      if (headerKey) {
+        columnMap[headerKey] = index;
       }
     });
 
-    // 데이터 처리
-    const dataRows = rows.slice(headerRowIndex + 1);
+    // 주요 컬럼 인덱스 확인 (F열 = 인덱스 5가 캠핑장명)
+    const campingNameIndex = columnMap['캠핑장명'] !== undefined ? columnMap['캠핑장명'] : 5; // F열 = 인덱스 5
+
+    console.log(`캠핑장명 컬럼 인덱스: ${campingNameIndex}`);
+    console.log(`총 컬럼 수: ${headers.length}`);
+
+    // 데이터 처리 (5행부터 시작, 0-based로는 4행부터)
+    // 헤더가 3행(인덱스 2)이므로 데이터는 4행(인덱스 3)부터 시작
+    // 하지만 사용자가 5행부터라고 했으므로 인덱스 4부터 시작
+    const dataStartIndex = headerRowIndex + 2; // 헤더 다음 다음 행부터 (5행 = 인덱스 4)
+    const dataRows = rows.slice(dataStartIndex);
+    
     const data = dataRows
       .map((row: string[], index: number) => {
         if (!row || row.length === 0) {
           return null;
         }
         
-        const hasData = row.some((cell: string) => cell && cell.trim() !== '');
-        if (!hasData) {
-          return null;
+        // 캠핑장명이 있는지 확인 (F열 = 인덱스 5)
+        const campingName = row[campingNameIndex]?.trim();
+        if (!campingName || campingName === '') {
+          return null; // 캠핑장명이 없으면 스킵
         }
-
+        
+        // 모든 컬럼 데이터를 객체로 변환
         const item: any = { 
-          id: index + 1,
+          id: dataStartIndex + index + 1, // 실제 행 번호
+          '캠핑장명': campingName,
         };
         
-        if (columnMap['시/도'] !== undefined && row[columnMap['시/도']]) {
-          item['시/도'] = String(row[columnMap['시/도']]).trim();
-        }
-        if (columnMap['시/군/구'] !== undefined && row[columnMap['시/군/구']]) {
-          item['시/군/구'] = String(row[columnMap['시/군/구']]).trim();
-        }
-        if (columnMap['담당 MD'] !== undefined && row[columnMap['담당 MD']]) {
-          item['담당 MD'] = String(row[columnMap['담당 MD']]).trim();
-        }
-        if (columnMap['결과'] !== undefined && row[columnMap['결과']]) {
-          item['결과'] = String(row[columnMap['결과']]).trim();
-        }
-        if (columnMap['사유'] !== undefined && row[columnMap['사유']]) {
-          item['사유'] = String(row[columnMap['사유']]).trim();
-        }
+        // 모든 헤더에 대해 데이터 매핑
+        headers.forEach((header, colIndex) => {
+          const headerKey = header.trim();
+          if (headerKey && row[colIndex] !== undefined) {
+            const cellValue = String(row[colIndex]).trim();
+            if (cellValue) {
+              item[headerKey] = cellValue;
+            }
+          }
+        });
         
-        return (item['담당 MD'] || item['결과']) ? item : null;
+        return item;
       })
-      .filter((item: any) => item !== null);
+      .filter((item: any) => item !== null && item['캠핑장명']);
 
-    console.log(`Processed ${data.length} data items`);
+    console.log(`Processed ${data.length} camping sites`);
+    console.log(`Sample data (first item):`, data[0] ? Object.keys(data[0]) : 'No data');
     return data;
   } catch (error: any) {
     console.error('Error fetching sales data:', error);

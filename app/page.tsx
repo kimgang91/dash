@@ -5,11 +5,13 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 
 interface SalesData {
   id: number;
-  '시/도': string;
-  '시/군/구': string;
-  '담당 MD': string;
-  '결과': string;
-  '사유': string;
+  '캠핑장명': string;
+  '시/도'?: string;
+  '시/군/구'?: string;
+  '담당 MD'?: string;
+  '결과'?: string;
+  '사유'?: string;
+  [key: string]: any; // 모든 컬럼 데이터를 포함
 }
 
 interface FilterState {
@@ -23,6 +25,8 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 export default function SalesDashboard() {
   const [data, setData] = useState<SalesData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedItem, setSelectedItem] = useState<SalesData | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<FilterState>({
     region: '',
     md: '',
@@ -33,10 +37,19 @@ export default function SalesDashboard() {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (showSuccess = false) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/sales');
+      // 캐시 방지를 위해 타임스탬프 추가
+      const timestamp = new Date().getTime();
+      const response = await fetch(`/api/sales?t=${timestamp}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -52,20 +65,23 @@ export default function SalesDashboard() {
       }
       if (result.data) {
         setData(result.data);
+        if (showSuccess) {
+          console.log(`✅ 데이터 새로고침 완료: ${result.data.length}개 캠핑장 로드됨`);
+        }
       }
     } catch (error: any) {
       console.error('Error fetching data:', error);
       // 더 구체적인 에러 메시지 표시
       const errorMessage = error.message || '데이터를 불러오는 중 오류가 발생했습니다.';
       // 에러 메시지에 따라 다른 안내 표시
-      if (errorMessage.includes('접근 권한') || errorMessage.includes('403')) {
+      if (errorMessage.includes('접근 권한') || errorMessage.includes('403') || errorMessage.includes('공개')) {
         alert(
-          'Google Sheets 접근 권한이 없습니다.\n\n' +
+          'Google Sheets가 공개되어 있지 않습니다.\n\n' +
           '해결 방법:\n' +
           '1. Google Sheets 문서를 엽니다:\n' +
           '   https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit\n' +
           '2. 우측 상단 "공유" 버튼 클릭\n' +
-          '3. 다음 이메일 추가: dashboard@genial-retina-488004-s8.iam.gserviceaccount.com\n' +
+          '3. "링크가 있는 모든 사용자" 또는 "공개"로 설정\n' +
           '4. 권한: "보기 가능(뷰어)" 선택\n' +
           '5. "완료" 클릭'
         );
@@ -80,12 +96,23 @@ export default function SalesDashboard() {
   // 필터링된 데이터
   const filteredData = useMemo(() => {
     return data.filter((item) => {
+      // 검색어 필터
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        const campingName = (item['캠핑장명'] || '').toLowerCase();
+        if (!campingName.includes(searchLower)) {
+          return false;
+        }
+      }
+      // 지역 필터
       if (filters.region && item['시/도'] !== filters.region) return false;
+      // MD 필터
       if (filters.md && item['담당 MD'] !== filters.md) return false;
+      // 결과 필터
       if (filters.result && item['결과'] !== filters.result) return false;
       return true;
     });
-  }, [data, filters]);
+  }, [data, filters, searchTerm]);
 
   // KPI 계산
   const kpis = useMemo(() => {
@@ -228,17 +255,32 @@ export default function SalesDashboard() {
         <header className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">고캠핑 DB 영업 현황 대시보드</h1>
           <p className="text-gray-600">MD별 영업 성과 및 성과급 대상자 선정</p>
-          <button
-            onClick={fetchData}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            데이터 새로고침
-          </button>
+          <div className="flex gap-2 mt-4">
+            <button
+              onClick={() => fetchData(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            >
+              🔄 데이터 새로고침
+            </button>
+            <div className="px-4 py-2 bg-gray-100 rounded-lg text-sm text-gray-600 flex items-center">
+              총 {data.length.toLocaleString()}개 캠핑장
+            </div>
+          </div>
         </header>
 
-        {/* 필터 */}
+        {/* 필터 및 검색 */}
         <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <h2 className="text-lg font-semibold mb-4">필터</h2>
+          <h2 className="text-lg font-semibold mb-4">필터 및 검색</h2>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">캠핑장명 검색</label>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="캠핑장명을 입력하세요..."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">지역 (시/도)</label>
@@ -547,7 +589,89 @@ export default function SalesDashboard() {
             </table>
           </div>
         </div>
+
+        {/* 캠핑장 목록 */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">
+            캠핑장 목록 ({filteredData.length.toLocaleString()}개)
+          </h2>
+          <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-100 sticky top-0">
+                <tr>
+                  <th className="px-4 py-2 text-left">번호</th>
+                  <th className="px-4 py-2 text-left">캠핑장명</th>
+                  <th className="px-4 py-2 text-left">시/도</th>
+                  <th className="px-4 py-2 text-left">시/군/구</th>
+                  <th className="px-4 py-2 text-left">담당 MD</th>
+                  <th className="px-4 py-2 text-left">결과</th>
+                  <th className="px-4 py-2 text-center">상세</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredData.map((item) => (
+                  <tr key={item.id} className="border-b hover:bg-gray-50 cursor-pointer">
+                    <td className="px-4 py-2">{item.id}</td>
+                    <td className="px-4 py-2 font-medium">{item['캠핑장명'] || '-'}</td>
+                    <td className="px-4 py-2">{item['시/도'] || '-'}</td>
+                    <td className="px-4 py-2">{item['시/군/구'] || '-'}</td>
+                    <td className="px-4 py-2">{item['담당 MD'] || '-'}</td>
+                    <td className="px-4 py-2">{item['결과'] || '-'}</td>
+                    <td className="px-4 py-2 text-center">
+                      <button
+                        onClick={() => setSelectedItem(item)}
+                        className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                      >
+                        상세보기
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {/* 상세 정보 모달 */}
+      {selectedItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
+              <h2 className="text-2xl font-bold">캠핑장 상세 정보</h2>
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+            <div className="p-6">
+              <div className="mb-4">
+                <h3 className="text-xl font-semibold mb-2 text-blue-600">{selectedItem['캠핑장명']}</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(selectedItem)
+                  .filter(([key]) => key !== 'id')
+                  .map(([key, value]) => (
+                    <div key={key} className="border-b pb-2">
+                      <div className="text-sm font-medium text-gray-600">{key}</div>
+                      <div className="text-base text-gray-900 mt-1">{String(value || '-')}</div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <div className="sticky bottom-0 bg-gray-50 border-t p-4 flex justify-end">
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
