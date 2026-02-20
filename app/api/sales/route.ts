@@ -3,7 +3,7 @@ import { getSalesData } from '@/lib/googleSheets';
 
 // 동적 라우트로 설정 (빌드 타임에 실행되지 않음)
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
+export const runtime = 'nodejs'; // Node.js runtime 사용
 
 export async function GET() {
   try {
