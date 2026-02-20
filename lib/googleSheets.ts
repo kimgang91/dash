@@ -8,35 +8,104 @@ function getSheetsClient() {
   let privateKey =
     process.env.GOOGLE_SHEETS_PRIVATE_KEY || process.env.PRIVATE_KEY;
 
+  // 디버깅: 어떤 환경변수가 있는지 로그 (민감 정보는 제외)
+  const envKeys = Object.keys(process.env).filter(key => 
+    key.includes('CLIENT') || key.includes('PRIVATE') || key.includes('EMAIL')
+  );
+  console.log('Available env keys:', envKeys);
+  console.log('Client email found:', !!clientEmail, clientEmail ? clientEmail.substring(0, 20) + '...' : 'NO');
+  console.log('Private key found:', !!privateKey, privateKey ? privateKey.substring(0, 30) + '...' : 'NO');
+
   if (!clientEmail) {
     throw new Error(
-      'Google 서비스 계정 이메일 환경변수가 없습니다. Vercel에서 GOOGLE_SHEETS_CLIENT_EMAIL 또는 CLIENT_EMAIL 이름으로 설정해주세요.'
+      `Google 서비스 계정 이메일 환경변수가 없습니다. 
+현재 확인된 환경변수: ${envKeys.join(', ') || '없음'}
+Vercel에서 CLIENT_EMAIL 또는 GOOGLE_SHEETS_CLIENT_EMAIL 이름으로 설정해주세요.
+값: dashboard@genial-retina-488004-s8.iam.gserviceaccount.com`
     );
   }
 
   if (!privateKey) {
     throw new Error(
-      'Google 서비스 계정 Private Key 환경변수가 없습니다. Vercel에서 GOOGLE_SHEETS_PRIVATE_KEY 또는 PRIVATE_KEY 이름으로 설정해주세요.'
+      `Google 서비스 계정 Private Key 환경변수가 없습니다.
+현재 확인된 환경변수: ${envKeys.join(', ') || '없음'}
+Vercel에서 PRIVATE_KEY 또는 GOOGLE_SHEETS_PRIVATE_KEY 이름으로 설정해주세요.`
     );
   }
 
-  // 2) Private Key 문자열 정리
-  privateKey = privateKey.trim();
+  // 2) Private Key 문자열 정리 (더 강력한 파싱)
+  let formattedPrivateKey = privateKey;
 
-  // 양 끝에 " 로 둘러싸여 있으면 제거 (JSON에서 그대로 붙여넣은 경우)
-  if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-    privateKey = privateKey.slice(1, -1);
+  // 디버깅: 원본 Private Key 확인 (처음 100자만)
+  console.log('Original private key (first 100 chars):', privateKey.substring(0, 100));
+  console.log('Original private key length:', privateKey.length);
+
+  // 1단계: 앞뒤 공백 제거
+  formattedPrivateKey = formattedPrivateKey.trim();
+
+  // 2단계: 양 끝의 큰따옴표 제거 (여러 번 중첩되어 있을 수 있음)
+  while (formattedPrivateKey.startsWith('"') && formattedPrivateKey.endsWith('"')) {
+    formattedPrivateKey = formattedPrivateKey.slice(1, -1).trim();
   }
 
-  // JSON에서 온 \n 을 실제 줄바꿈으로 변환
-  const formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+  // 3단계: 작은따옴표도 제거 (혹시 모를 경우)
+  while (formattedPrivateKey.startsWith("'") && formattedPrivateKey.endsWith("'")) {
+    formattedPrivateKey = formattedPrivateKey.slice(1, -1).trim();
+  }
 
-  // Private Key 형식 검증
+  // 4단계: JSON 이스케이프 문자 처리 (중요!)
+  // 먼저 실제 줄바꿈이 있는지 확인
+  const hasActualNewlines = formattedPrivateKey.includes('\n');
+  const hasEscapedNewlines = formattedPrivateKey.includes('\\n');
+
+  console.log('Has actual newlines:', hasActualNewlines);
+  console.log('Has escaped newlines:', hasEscapedNewlines);
+
+  // \\n -> 실제 줄바꿈으로 변환 (JSON 형식인 경우)
+  if (hasEscapedNewlines && !hasActualNewlines) {
+    formattedPrivateKey = formattedPrivateKey
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\\\/g, '\\'); // 이중 백슬래시 처리
+  }
+
+  // 5단계: Private Key 형식 검증
   if (!formattedPrivateKey.includes('BEGIN PRIVATE KEY')) {
     throw new Error(
-      'Google Private Key 형식이 올바르지 않습니다. BEGIN/END PRIVATE KEY 구간 전체를 복사했는지 확인해주세요.'
+      `Google Private Key 형식이 올바르지 않습니다. BEGIN PRIVATE KEY가 없습니다.
+원본 길이: ${privateKey.length}, 파싱 후 길이: ${formattedPrivateKey.length}
+처음 100자: ${formattedPrivateKey.substring(0, 100)}`
     );
   }
+
+  if (!formattedPrivateKey.includes('END PRIVATE KEY')) {
+    throw new Error(
+      `Google Private Key에 END PRIVATE KEY가 없습니다.
+원본 길이: ${privateKey.length}, 파싱 후 길이: ${formattedPrivateKey.length}
+마지막 100자: ${formattedPrivateKey.substring(Math.max(0, formattedPrivateKey.length - 100))}`
+    );
+  }
+
+  // 6단계: Private Key 앞뒤 공백 제거 (최종)
+  formattedPrivateKey = formattedPrivateKey.trim();
+
+  // 7단계: 줄바꿈 정규화 (모든 줄바꿈을 \n으로 통일)
+  formattedPrivateKey = formattedPrivateKey.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // 8단계: Private Key 길이 검증 (일반적으로 1600-1700자 정도)
+  if (formattedPrivateKey.length < 1500) {
+    throw new Error(
+      `Private Key가 너무 짧습니다. 전체가 복사되었는지 확인해주세요.
+현재 길이: ${formattedPrivateKey.length} (예상: 1600-1700자)`
+    );
+  }
+
+  // 디버깅: 최종 Private Key 확인
+  console.log('Final private key starts with:', formattedPrivateKey.substring(0, 50));
+  console.log('Final private key ends with:', formattedPrivateKey.substring(formattedPrivateKey.length - 50));
+  console.log('Final private key length:', formattedPrivateKey.length);
+  console.log('Line count:', formattedPrivateKey.split('\n').length);
 
   const auth = new google.auth.GoogleAuth({
     credentials: {
