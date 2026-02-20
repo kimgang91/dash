@@ -29,6 +29,9 @@ export default function SalesDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedItem, setSelectedItem] = useState<SalesData | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showAllDistricts, setShowAllDistricts] = useState(false);
+  const [aiAnalysis, setAiAnalysis] = useState<any>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const [filters, setFilters] = useState<FilterState>({
     region: '',
     md: '',
@@ -246,6 +249,90 @@ export default function SalesDashboard() {
     return Array.from(resultSet).sort();
   }, [data]);
 
+  // AI 분석 함수 (결과, 사유, 내용 요약)
+  const analyzeData = async () => {
+    try {
+      setAnalyzing(true);
+      
+      // 결과별 통계
+      const resultStats: { [key: string]: number } = {};
+      const reasons: string[] = [];
+      const contents: string[] = [];
+      
+      filteredData.forEach((item) => {
+        if (item['결과']) {
+          resultStats[item['결과']] = (resultStats[item['결과']] || 0) + 1;
+        }
+        if (item['사유'] && item['사유'].trim()) {
+          reasons.push(item['사유'].trim());
+        }
+        if (item['내용'] && item['내용'].trim()) {
+          contents.push(item['내용'].trim());
+        }
+      });
+
+      // 결과 요약
+      const resultSummary = Object.entries(resultStats)
+        .sort((a, b) => b[1] - a[1])
+        .map(([result, count]) => ({
+          result,
+          count,
+          percentage: ((count / filteredData.length) * 100).toFixed(1),
+        }));
+
+      // 사유 분석 (빈도수 기반)
+      const reasonMap: { [key: string]: number } = {};
+      reasons.forEach((reason) => {
+        reasonMap[reason] = (reasonMap[reason] || 0) + 1;
+      });
+      const topReasons = Object.entries(reasonMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([reason, count]) => ({ reason, count }));
+
+      // 내용 키워드 추출 (간단한 분석)
+      const allContents = contents.join(' ');
+      const commonPhrases = [
+        '입점',
+        '거절',
+        '검토',
+        '대기',
+        '연락',
+        '협의',
+        '진행',
+        '완료',
+        '보류',
+      ];
+      const phraseCounts: { [key: string]: number } = {};
+      commonPhrases.forEach((phrase) => {
+        const regex = new RegExp(phrase, 'g');
+        const matches = allContents.match(regex);
+        if (matches) {
+          phraseCounts[phrase] = matches.length;
+        }
+      });
+
+      setAiAnalysis({
+        resultSummary,
+        topReasons,
+        phraseCounts,
+        totalAnalyzed: filteredData.length,
+        hasReasons: reasons.length,
+        hasContents: contents.length,
+      });
+    } catch (error) {
+      console.error('Analysis error:', error);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (filteredData.length > 0) {
+      analyzeData();
+    }
+  }, [filteredData]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -255,28 +342,34 @@ export default function SalesDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* 헤더 */}
-        <header className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">고캠핑 DB 영업 현황 대시보드</h1>
-          <p className="text-gray-600">MD별 영업 성과 및 성과급 대상자 선정</p>
-          <div className="flex gap-2 mt-4">
-            <button
-              onClick={() => fetchData(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              🔄 데이터 새로고침
-            </button>
-            <div className="px-4 py-2 bg-gray-100 rounded-lg text-sm text-gray-600 flex items-center">
-              총 {data.length.toLocaleString()}개 캠핑장
+        <header className="mb-8">
+          <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent mb-2">
+              고캠핑 DB 영업 현황 대시보드
+            </h1>
+            <p className="text-gray-600 text-lg mb-4">MD별 영업 성과 및 성과급 대상자 선정</p>
+            <div className="flex gap-3 flex-wrap">
+              <button
+                onClick={() => fetchData(true)}
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg transform hover:-translate-y-0.5 font-medium"
+              >
+                🔄 데이터 새로고침
+              </button>
+              <div className="px-6 py-3 bg-gradient-to-r from-gray-100 to-gray-200 rounded-xl text-sm font-semibold text-gray-700 flex items-center shadow-sm">
+                📊 총 {data.length.toLocaleString()}개 캠핑장
+              </div>
             </div>
           </div>
         </header>
 
         {/* 필터 및 검색 */}
-        <div className="bg-white rounded-lg shadow p-4 mb-6">
-          <h2 className="text-lg font-semibold mb-4">필터 및 검색</h2>
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border border-gray-100">
+          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <span className="text-2xl">🔍</span> 필터 및 검색
+          </h2>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">
               캠핑장명/내용 검색
@@ -345,32 +438,36 @@ export default function SalesDashboard() {
         </div>
 
         {/* KPI 카드 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">총 캠핑장 수</div>
-            <div className="text-3xl font-bold text-gray-900">{kpis.total.toLocaleString()}</div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-sm font-medium text-blue-100 mb-2">총 캠핑장 수</div>
+            <div className="text-4xl font-bold">{kpis.total.toLocaleString()}</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">총 컨택 수</div>
-            <div className="text-3xl font-bold text-gray-900">{kpis.contacts.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-sm font-medium text-indigo-100 mb-2">총 컨택 수</div>
+            <div className="text-4xl font-bold">{kpis.contacts.toLocaleString()}</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">입점(신규) 수</div>
-            <div className="text-3xl font-bold text-green-600">{kpis.newEntry.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-sm font-medium text-green-100 mb-2">입점(신규) 수</div>
+            <div className="text-4xl font-bold">{kpis.newEntry.toLocaleString()}</div>
           </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="text-sm text-gray-600 mb-1">거절 수</div>
-            <div className="text-3xl font-bold text-red-600">{kpis.rejected.toLocaleString()}</div>
+          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-2xl shadow-xl p-6 text-white transform hover:scale-105 transition-all">
+            <div className="text-sm font-medium text-red-100 mb-2">거절 수</div>
+            <div className="text-4xl font-bold">{kpis.rejected.toLocaleString()}</div>
           </div>
         </div>
 
         {/* 성과급 대상자 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           {topPerformers.map((performer, index) => (
             <div
               key={performer.name}
-              className={`bg-white rounded-lg shadow p-6 ${
-                index === 0 ? 'border-4 border-yellow-400' : index === 1 ? 'border-4 border-gray-300' : ''
+              className={`bg-white rounded-2xl shadow-xl p-6 border-2 transform hover:scale-105 transition-all ${
+                index === 0 
+                  ? 'border-yellow-400 bg-gradient-to-br from-yellow-50 to-yellow-100' 
+                  : index === 1 
+                  ? 'border-gray-300 bg-gradient-to-br from-gray-50 to-gray-100' 
+                  : 'border-gray-200'
               }`}
             >
               <div className="flex items-center justify-between mb-4">
@@ -401,45 +498,72 @@ export default function SalesDashboard() {
         </div>
 
         {/* 지역별 현황 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">지역별 캠핑장 현황</h2>
-          <div className="h-80 mb-4">
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <span className="text-2xl">📍</span> 지역별 캠핑장 현황
+          </h2>
+          <div className="h-80 mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={regionData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
-                <YAxis />
-                <Tooltip />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e7ff" />
+                <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} stroke="#64748b" />
+                <YAxis stroke="#64748b" />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: 'white', 
+                    border: '1px solid #e0e7ff',
+                    borderRadius: '8px',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+                  }} 
+                />
                 <Legend />
-                <Bar dataKey="value" fill="#0088FE" name="캠핑장 수" />
+                <Bar dataKey="value" fill="#4f46e5" name="캠핑장 수" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-100">
-                  <th className="px-4 py-2 text-left">지역(광역)</th>
-                  <th className="px-4 py-2 text-left">지역(시/군/리)</th>
-                  <th className="px-4 py-2 text-right">건수</th>
-                </tr>
-              </thead>
-              <tbody>
-                {districtData.slice(0, 20).map((item, index) => (
-                  <tr key={index} className="border-b">
-                    <td className="px-4 py-2">{item.region}</td>
-                    <td className="px-4 py-2">{item.name}</td>
-                    <td className="px-4 py-2 text-right">{item.count}</td>
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">지역별 상세 현황 (TOP 10)</h3>
+              {districtData.length > 10 && (
+                <button
+                  onClick={() => setShowAllDistricts(!showAllDistricts)}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-sm"
+                >
+                  {showAllDistricts ? '접기' : '자세히 보기'}
+                </button>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+                    <th className="px-4 py-3 text-left rounded-tl-lg">지역(광역)</th>
+                    <th className="px-4 py-3 text-left">지역(시/군/리)</th>
+                    <th className="px-4 py-3 text-right rounded-tr-lg">건수</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(showAllDistricts ? districtData : districtData.slice(0, 10)).map((item, index) => (
+                    <tr 
+                      key={index} 
+                      className="border-b hover:bg-blue-50 transition-colors"
+                    >
+                      <td className="px-4 py-3 font-medium">{item.region}</td>
+                      <td className="px-4 py-3">{item.name}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-blue-600">{item.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
         {/* MD별 컨택 현황 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">MD별 컨택 현황</h2>
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <span className="text-2xl">👥</span> MD별 컨택 현황
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
@@ -465,10 +589,10 @@ export default function SalesDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="px-4 py-2 text-left">MD</th>
-                    <th className="px-4 py-2 text-right">컨택 수</th>
-                    <th className="px-4 py-2 text-right">비율</th>
+                  <tr className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+                    <th className="px-4 py-3 text-left rounded-tl-lg">MD</th>
+                    <th className="px-4 py-3 text-right">컨택 수</th>
+                    <th className="px-4 py-3 text-right rounded-tr-lg">비율</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -476,10 +600,14 @@ export default function SalesDashboard() {
                     const total = mdData.reduce((sum, d) => sum + d.value, 0);
                     const percentage = ((item.value / total) * 100).toFixed(1);
                     return (
-                      <tr key={index} className="border-b">
-                        <td className="px-4 py-2">{item.name}</td>
-                        <td className="px-4 py-2 text-right">{item.value}</td>
-                        <td className="px-4 py-2 text-right">{percentage}%</td>
+                      <tr key={index} className="border-b hover:bg-indigo-50 transition-colors">
+                        <td className="px-4 py-3 font-medium">{item.name}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-indigo-600">{item.value}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">
+                            {percentage}%
+                          </span>
+                        </td>
                       </tr>
                     );
                   })}
@@ -490,8 +618,10 @@ export default function SalesDashboard() {
         </div>
 
         {/* 컨택 결과 분석 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">컨택 결과 분석</h2>
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <span className="text-2xl">📈</span> 컨택 결과 분석
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
@@ -517,10 +647,10 @@ export default function SalesDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="px-4 py-2 text-left">결과</th>
-                    <th className="px-4 py-2 text-right">건수</th>
-                    <th className="px-4 py-2 text-right">비율</th>
+                  <tr className="bg-gradient-to-r from-green-600 to-emerald-600 text-white">
+                    <th className="px-4 py-3 text-left rounded-tl-lg">결과</th>
+                    <th className="px-4 py-3 text-right">건수</th>
+                    <th className="px-4 py-3 text-right rounded-tr-lg">비율</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -528,10 +658,14 @@ export default function SalesDashboard() {
                     const total = resultData.reduce((sum, d) => sum + d.value, 0);
                     const percentage = ((item.value / total) * 100).toFixed(1);
                     return (
-                      <tr key={index} className="border-b">
-                        <td className="px-4 py-2">{item.name}</td>
-                        <td className="px-4 py-2 text-right">{item.value}</td>
-                        <td className="px-4 py-2 text-right">{percentage}%</td>
+                      <tr key={index} className="border-b hover:bg-green-50 transition-colors">
+                        <td className="px-4 py-3 font-medium">{item.name}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-green-600">{item.value}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                            {percentage}%
+                          </span>
+                        </td>
                       </tr>
                     );
                   })}
@@ -543,23 +677,33 @@ export default function SalesDashboard() {
 
         {/* 거절/미진행 사유 분석 */}
         {rejectionReasons.length > 0 && (
-          <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-semibold mb-4">거절/미진행 사유 분석</h2>
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <span className="text-2xl">⚠️</span> 거절/미진행 사유 분석
+            </h2>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="bg-gray-100">
-                    <th className="px-4 py-2 text-left">순위</th>
-                    <th className="px-4 py-2 text-left">사유</th>
-                    <th className="px-4 py-2 text-right">건수</th>
+                  <tr className="bg-gradient-to-r from-red-600 to-pink-600 text-white">
+                    <th className="px-4 py-3 text-left rounded-tl-lg">순위</th>
+                    <th className="px-4 py-3 text-left">사유</th>
+                    <th className="px-4 py-3 text-right rounded-tr-lg">건수</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rejectionReasons.map((item, index) => (
-                    <tr key={index} className="border-b">
-                      <td className="px-4 py-2">{index + 1}</td>
-                      <td className="px-4 py-2">{item.name}</td>
-                      <td className="px-4 py-2 text-right">{item.value}</td>
+                    <tr key={index} className="border-b hover:bg-red-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                          index === 0 ? 'bg-yellow-400 text-yellow-900' :
+                          index === 1 ? 'bg-gray-300 text-gray-900' :
+                          'bg-gray-200 text-gray-700'
+                        }`}>
+                          {index + 1}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-medium">{item.name}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-red-600">{item.value}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -569,34 +713,50 @@ export default function SalesDashboard() {
         )}
 
         {/* MD 성과 순위 테이블 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">MD 성과 순위 (입점 신규 기준)</h2>
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <span className="text-2xl">🏆</span> MD 성과 순위 (입점 신규 기준)
+          </h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-gray-100">
-                  <th className="px-4 py-2 text-center">순위</th>
-                  <th className="px-4 py-2 text-left">MD</th>
-                  <th className="px-4 py-2 text-right">입점(신규)</th>
-                  <th className="px-4 py-2 text-right">컨택 수</th>
-                  <th className="px-4 py-2 text-right">전환율</th>
+                <tr className="bg-gradient-to-r from-yellow-500 via-amber-500 to-orange-500 text-white">
+                  <th className="px-4 py-3 text-center rounded-tl-lg">순위</th>
+                  <th className="px-4 py-3 text-left">MD</th>
+                  <th className="px-4 py-3 text-right">입점(신규)</th>
+                  <th className="px-4 py-3 text-right">컨택 수</th>
+                  <th className="px-4 py-3 text-right rounded-tr-lg">전환율</th>
                 </tr>
               </thead>
               <tbody>
                 {mdRanking.map((item) => (
                   <tr
                     key={item.name}
-                    className={`border-b ${
-                      item.rank === 1 ? 'bg-yellow-50 font-bold' : item.rank === 2 ? 'bg-gray-50 font-semibold' : ''
+                    className={`border-b transition-colors ${
+                      item.rank === 1 
+                        ? 'bg-gradient-to-r from-yellow-50 to-amber-50 hover:from-yellow-100 hover:to-amber-100 font-bold' 
+                        : item.rank === 2 
+                        ? 'bg-gradient-to-r from-gray-50 to-slate-50 hover:from-gray-100 hover:to-slate-100 font-semibold' 
+                        : 'hover:bg-gray-50'
                     }`}
                   >
-                    <td className="px-4 py-2 text-center">
-                      {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank}
+                    <td className="px-4 py-3 text-center">
+                      <span className="text-xl">
+                        {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : item.rank}
+                      </span>
                     </td>
-                    <td className="px-4 py-2">{item.name}</td>
-                    <td className="px-4 py-2 text-right text-green-600 font-semibold">{item.newEntry}건</td>
-                    <td className="px-4 py-2 text-right">{item.contacts}건</td>
-                    <td className="px-4 py-2 text-right">{item.conversionRate}%</td>
+                    <td className="px-4 py-3 font-medium">{item.name}</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full font-semibold">
+                        {item.newEntry}건
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium">{item.contacts}건</td>
+                    <td className="px-4 py-3 text-right">
+                      <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full font-semibold">
+                        {item.conversionRate}%
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -604,37 +764,124 @@ export default function SalesDashboard() {
           </div>
         </div>
 
+        {/* AI 분석 섹션 */}
+        {aiAnalysis && (
+          <div className="bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 rounded-2xl shadow-xl p-6 mb-8 border border-purple-100">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <span className="text-2xl">🤖</span> AI 데이터 분석 요약
+            </h2>
+            {analyzing ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600 mx-auto"></div>
+                <p className="mt-4 text-gray-600">분석 중...</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* 결과 분석 */}
+                <div className="bg-white rounded-xl p-5 shadow-md">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <span className="text-xl">📊</span> 결과 분석
+                  </h3>
+                  <div className="space-y-3">
+                    {aiAnalysis.resultSummary.slice(0, 5).map((item: any, index: number) => (
+                      <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg">
+                        <span className="text-sm font-medium text-gray-700">{item.result}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-gray-900">{item.count}건</span>
+                          <span className="text-xs text-gray-500">({item.percentage}%)</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 사유 분석 */}
+                <div className="bg-white rounded-xl p-5 shadow-md">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <span className="text-xl">💬</span> 주요 사유 (TOP 5)
+                  </h3>
+                  <div className="space-y-3">
+                    {aiAnalysis.topReasons.slice(0, 5).map((item: any, index: number) => (
+                      <div key={index} className="p-2 bg-gray-50 rounded-lg">
+                        <div className="text-sm font-medium text-gray-700 mb-1 line-clamp-2">{item.reason}</div>
+                        <div className="text-xs text-gray-500">{item.count}회</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 내용 키워드 분석 */}
+                <div className="bg-white rounded-xl p-5 shadow-md">
+                  <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                    <span className="text-xl">🔑</span> 내용 키워드
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(aiAnalysis.phraseCounts)
+                      .sort((a: any, b: any) => b[1] - a[1])
+                      .slice(0, 8)
+                      .map(([phrase, count]: any, index: number) => (
+                        <span
+                          key={index}
+                          className="px-3 py-1 bg-gradient-to-r from-blue-100 to-indigo-100 text-blue-700 rounded-full text-xs font-medium"
+                        >
+                          {phrase} ({count})
+                        </span>
+                      ))}
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="text-xs text-gray-600">
+                      <div>분석 대상: {aiAnalysis.totalAnalyzed}개</div>
+                      <div>사유 포함: {aiAnalysis.hasReasons}개</div>
+                      <div>내용 포함: {aiAnalysis.hasContents}개</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 캠핑장 목록 */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">
-            캠핑장 목록 ({filteredData.length.toLocaleString()}개)
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-100">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+            <span className="text-2xl">📋</span> 캠핑장 목록 ({filteredData.length.toLocaleString()}개)
           </h2>
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-100 sticky top-0">
+              <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0">
                 <tr>
-                  <th className="px-4 py-2 text-left">번호</th>
-                  <th className="px-4 py-2 text-left">캠핑장명</th>
-                  <th className="px-4 py-2 text-left">시/도</th>
-                  <th className="px-4 py-2 text-left">시/군/구</th>
-                  <th className="px-4 py-2 text-left">담당 MD</th>
-                  <th className="px-4 py-2 text-left">결과</th>
-                  <th className="px-4 py-2 text-center">상세</th>
+                  <th className="px-4 py-3 text-left rounded-tl-lg">번호</th>
+                  <th className="px-4 py-3 text-left">캠핑장명</th>
+                  <th className="px-4 py-3 text-left">지역(광역)</th>
+                  <th className="px-4 py-3 text-left">지역(시/군/리)</th>
+                  <th className="px-4 py-3 text-left">컨택MD</th>
+                  <th className="px-4 py-3 text-left">결과</th>
+                  <th className="px-4 py-3 text-center rounded-tr-lg">상세</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredData.map((item) => (
-                  <tr key={item.id} className="border-b hover:bg-gray-50 cursor-pointer">
-                    <td className="px-4 py-2">{item.id}</td>
-                    <td className="px-4 py-2 font-medium">{item['캠핑장명'] || '-'}</td>
-                    <td className="px-4 py-2">{item['시/도'] || '-'}</td>
-                    <td className="px-4 py-2">{item['시/군/구'] || '-'}</td>
-                    <td className="px-4 py-2">{item['담당 MD'] || '-'}</td>
-                    <td className="px-4 py-2">{item['결과'] || '-'}</td>
-                    <td className="px-4 py-2 text-center">
+                  <tr key={item.id} className="border-b hover:bg-gradient-to-r hover:from-blue-50 hover:to-indigo-50 transition-colors">
+                    <td className="px-4 py-3 text-gray-600">{item.id}</td>
+                    <td className="px-4 py-3 font-semibold text-gray-900">{item['캠핑장명'] || '-'}</td>
+                    <td className="px-4 py-3">{item['지역(광역)'] || '-'}</td>
+                    <td className="px-4 py-3">{item['지역(시/군/리)'] || '-'}</td>
+                    <td className="px-4 py-3">{item['컨택MD'] || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        item['결과'] === '입점(신규)' 
+                          ? 'bg-green-100 text-green-700' 
+                          : item['결과'] === '거절'
+                          ? 'bg-red-100 text-red-700'
+                          : 'bg-gray-100 text-gray-700'
+                      }`}>
+                        {item['결과'] || '-'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => setSelectedItem(item)}
-                        className="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs"
+                        className="px-4 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition text-xs font-medium shadow-sm"
                       >
                         상세보기
                       </button>
@@ -649,36 +896,48 @@ export default function SalesDashboard() {
 
       {/* 상세 정보 모달 */}
       {selectedItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b p-4 flex justify-between items-center">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-gray-200">
+            <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 flex justify-between items-center rounded-t-2xl">
               <h2 className="text-2xl font-bold">캠핑장 상세 정보</h2>
               <button
                 onClick={() => setSelectedItem(null)}
-                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+                className="text-white hover:text-gray-200 text-3xl font-bold w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/20 transition"
               >
                 ×
               </button>
             </div>
             <div className="p-6">
-              <div className="mb-4">
-                <h3 className="text-xl font-semibold mb-2 text-blue-600">{selectedItem['캠핑장명']}</h3>
+              <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+                <h3 className="text-2xl font-bold text-gray-900 mb-2">{selectedItem['캠핑장명']}</h3>
+                <div className="flex gap-4 text-sm text-gray-600">
+                  {selectedItem['지역(광역)'] && (
+                    <span className="flex items-center gap-1">
+                      <span>📍</span> {selectedItem['지역(광역)']} {selectedItem['지역(시/군/리)']}
+                    </span>
+                  )}
+                  {selectedItem['컨택MD'] && (
+                    <span className="flex items-center gap-1">
+                      <span>👤</span> {selectedItem['컨택MD']}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {Object.entries(selectedItem)
-                  .filter(([key]) => key !== 'id')
+                  .filter(([key]) => key !== 'id' && key !== '캠핑장명')
                   .map(([key, value]) => (
-                    <div key={key} className="border-b pb-2">
-                      <div className="text-sm font-medium text-gray-600">{key}</div>
-                      <div className="text-base text-gray-900 mt-1">{String(value || '-')}</div>
+                    <div key={key} className="bg-gray-50 rounded-lg p-4 border border-gray-200 hover:shadow-md transition">
+                      <div className="text-xs font-semibold text-gray-500 uppercase mb-1">{key}</div>
+                      <div className="text-base text-gray-900 font-medium">{String(value || '-')}</div>
                     </div>
                   ))}
               </div>
             </div>
-            <div className="sticky bottom-0 bg-gray-50 border-t p-4 flex justify-end">
+            <div className="sticky bottom-0 bg-gray-50 border-t p-4 flex justify-end rounded-b-2xl">
               <button
                 onClick={() => setSelectedItem(null)}
-                className="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600"
+                className="px-8 py-3 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-xl hover:from-gray-600 hover:to-gray-700 transition font-medium shadow-md"
               >
                 닫기
               </button>
