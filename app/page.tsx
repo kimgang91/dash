@@ -6,11 +6,13 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 interface SalesData {
   id: number;
   '캠핑장명': string;
-  '시/도'?: string;
-  '시/군/구'?: string;
-  '담당 MD'?: string;
+  '지역(광역)'?: string;
+  '지역(시/군/리)'?: string;
+  '컨택MD'?: string;
+  '컨택 최종일'?: string;
   '결과'?: string;
   '사유'?: string;
+  '내용'?: string;
   [key: string]: any; // 모든 컬럼 데이터를 포함
 }
 
@@ -96,18 +98,19 @@ export default function SalesDashboard() {
   // 필터링된 데이터
   const filteredData = useMemo(() => {
     return data.filter((item) => {
-      // 검색어 필터
+      // 검색어 필터 (캠핑장명, 내용에서 검색)
       if (searchTerm) {
         const searchLower = searchTerm.toLowerCase();
         const campingName = (item['캠핑장명'] || '').toLowerCase();
-        if (!campingName.includes(searchLower)) {
+        const content = (item['내용'] || '').toLowerCase();
+        if (!campingName.includes(searchLower) && !content.includes(searchLower)) {
           return false;
         }
       }
-      // 지역 필터
-      if (filters.region && item['시/도'] !== filters.region) return false;
-      // MD 필터
-      if (filters.md && item['담당 MD'] !== filters.md) return false;
+      // 지역 필터 (지역(광역))
+      if (filters.region && item['지역(광역)'] !== filters.region) return false;
+      // MD 필터 (컨택MD)
+      if (filters.md && item['컨택MD'] !== filters.md) return false;
       // 결과 필터
       if (filters.result && item['결과'] !== filters.result) return false;
       return true;
@@ -119,15 +122,15 @@ export default function SalesDashboard() {
     const total = filteredData.length;
     const newEntry = filteredData.filter((item) => item['결과'] === '입점(신규)').length;
     const rejected = filteredData.filter((item) => item['결과'] === '거절').length;
-    const contacts = filteredData.filter((item) => item['담당 MD']).length;
+    const contacts = filteredData.filter((item) => item['컨택MD']).length;
     return { total, newEntry, rejected, contacts };
   }, [filteredData]);
 
-  // 지역별 현황
+  // 지역별 현황 (지역(광역))
   const regionData = useMemo(() => {
     const regionMap: { [key: string]: number } = {};
     filteredData.forEach((item) => {
-      const region = item['시/도'] || '미지정';
+      const region = item['지역(광역)'] || '미지정';
       regionMap[region] = (regionMap[region] || 0) + 1;
     });
     return Object.entries(regionMap)
@@ -135,12 +138,12 @@ export default function SalesDashboard() {
       .sort((a, b) => b.value - a.value);
   }, [filteredData]);
 
-  // 시/군/구 상세 데이터
+  // 시/군/구 상세 데이터 (지역(시/군/리))
   const districtData = useMemo(() => {
     const districtMap: { [key: string]: { region: string; count: number } } = {};
     filteredData.forEach((item) => {
-      const district = item['시/군/구'] || '미지정';
-      const region = item['시/도'] || '미지정';
+      const district = item['지역(시/군/리)'] || '미지정';
+      const region = item['지역(광역)'] || '미지정';
       if (!districtMap[district]) {
         districtMap[district] = { region, count: 0 };
       }
@@ -151,12 +154,14 @@ export default function SalesDashboard() {
       .sort((a, b) => b.count - a.count);
   }, [filteredData]);
 
-  // MD별 컨택 현황
+  // MD별 컨택 현황 (컨택MD)
   const mdData = useMemo(() => {
     const mdMap: { [key: string]: number } = {};
     filteredData.forEach((item) => {
-      const md = item['담당 MD'] || '미지정';
-      mdMap[md] = (mdMap[md] || 0) + 1;
+      const md = item['컨택MD'] || '미지정';
+      if (md !== '미지정') {
+        mdMap[md] = (mdMap[md] || 0) + 1;
+      }
     });
     return Object.entries(mdMap)
       .map(([name, value]) => ({ name, value }))
@@ -192,15 +197,16 @@ export default function SalesDashboard() {
       .slice(0, 10); // Top 10
   }, [filteredData]);
 
-  // MD 성과 순위 (입점 신규 기준)
+  // MD 성과 순위 (입점 신규 기준) - 컨택MD 사용
   const mdRanking = useMemo(() => {
     const mdMap: { [key: string]: { contacts: number; newEntry: number } } = {};
     filteredData.forEach((item) => {
-      const md = item['담당 MD'] || '미지정';
+      const md = item['컨택MD'] || '미지정';
+      if (md === '미지정') return;
       if (!mdMap[md]) {
         mdMap[md] = { contacts: 0, newEntry: 0 };
       }
-      if (item['담당 MD']) {
+      if (item['컨택MD']) {
         mdMap[md].contacts++;
       }
       if (item['결과'] === '입점(신규)') {
@@ -224,14 +230,14 @@ export default function SalesDashboard() {
     return mdRanking.slice(0, 2);
   }, [mdRanking]);
 
-  // 필터 옵션
+  // 필터 옵션 (드롭다운용)
   const regions = useMemo(() => {
-    const regionSet = new Set(data.map((item) => item['시/도']).filter(Boolean));
+    const regionSet = new Set(data.map((item) => item['지역(광역)']).filter(Boolean));
     return Array.from(regionSet).sort();
   }, [data]);
 
   const mds = useMemo(() => {
-    const mdSet = new Set(data.map((item) => item['담당 MD']).filter(Boolean));
+    const mdSet = new Set(data.map((item) => item['컨택MD']).filter(Boolean));
     return Array.from(mdSet).sort();
   }, [data]);
 
@@ -272,24 +278,28 @@ export default function SalesDashboard() {
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <h2 className="text-lg font-semibold mb-4">필터 및 검색</h2>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">캠핑장명 검색</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              캠핑장명/내용 검색
+            </label>
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="캠핑장명을 입력하세요..."
+              placeholder="캠핑장명 또는 내용을 입력하세요..."
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">지역 (시/도)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                지역(광역) 필터
+              </label>
               <select
                 value={filters.region}
                 onChange={(e) => setFilters({ ...filters, region: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">전체</option>
+                <option value="">전체 지역</option>
                 {regions.map((region) => (
                   <option key={region} value={region}>
                     {region}
@@ -298,13 +308,15 @@ export default function SalesDashboard() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">담당 MD</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                컨택MD 필터
+              </label>
               <select
                 value={filters.md}
                 onChange={(e) => setFilters({ ...filters, md: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">전체</option>
+                <option value="">전체 MD</option>
                 {mds.map((md) => (
                   <option key={md} value={md}>
                     {md}
@@ -313,13 +325,15 @@ export default function SalesDashboard() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">결과</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                결과 필터
+              </label>
               <select
                 value={filters.result}
                 onChange={(e) => setFilters({ ...filters, result: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">전체</option>
+                <option value="">전체 결과</option>
                 {results.map((result) => (
                   <option key={result} value={result}>
                     {result}
@@ -405,8 +419,8 @@ export default function SalesDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-100">
-                  <th className="px-4 py-2 text-left">시/도</th>
-                  <th className="px-4 py-2 text-left">시/군/구</th>
+                  <th className="px-4 py-2 text-left">지역(광역)</th>
+                  <th className="px-4 py-2 text-left">지역(시/군/리)</th>
                   <th className="px-4 py-2 text-right">건수</th>
                 </tr>
               </thead>

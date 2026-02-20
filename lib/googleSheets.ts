@@ -115,11 +115,34 @@ export async function getSalesData() {
       }
     });
 
-    // 주요 컬럼 인덱스 확인 (F열 = 인덱스 5가 캠핑장명)
+    // 정확한 컬럼 매핑 (3행 헤더 기준)
+    // C열(인덱스 2) = 지역(광역)
+    // D열(인덱스 3) = 지역(시/군/리)
+    // F열(인덱스 5) = 캠핑장명
+    // I열(인덱스 8) = 컨택MD
+    // J열(인덱스 9) = 컨택 최종일
+    // K열(인덱스 10) = 결과
+    // L열(인덱스 11) = 사유
+    // M열(인덱스 12) = 내용
+
+    // 컬럼명 매핑 (헤더명과 내부 키 매핑)
+    const columnNameMap: { [key: string]: string } = {
+      '지역(광역)': '지역(광역)',
+      '지역(시/군/리)': '지역(시/군/리)',
+      '캠핑장명': '캠핑장명',
+      '컨택MD': '컨택MD',
+      '컨택 최종일': '컨택 최종일',
+      '결과': '결과',
+      '사유': '사유',
+      '내용': '내용',
+    };
+
+    // 주요 컬럼 인덱스 확인
     const campingNameIndex = columnMap['캠핑장명'] !== undefined ? columnMap['캠핑장명'] : 5; // F열 = 인덱스 5
 
     console.log(`캠핑장명 컬럼 인덱스: ${campingNameIndex}`);
     console.log(`총 컬럼 수: ${headers.length}`);
+    console.log(`헤더 목록:`, headers.slice(0, 15)); // 처음 15개 컬럼만 로그
 
     // 데이터 처리 (5행부터 시작, 0-based로는 4행부터)
     // 헤더가 3행(인덱스 2)이므로 데이터는 4행(인덱스 3)부터 시작
@@ -145,12 +168,13 @@ export async function getSalesData() {
           '캠핑장명': campingName,
         };
         
-        // 모든 헤더에 대해 데이터 매핑
+        // 모든 헤더에 대해 데이터 매핑 (원본 헤더명 그대로 사용)
         headers.forEach((header, colIndex) => {
           const headerKey = header.trim();
           if (headerKey && row[colIndex] !== undefined) {
             const cellValue = String(row[colIndex]).trim();
-            if (cellValue) {
+            // 빈 값도 포함하되, null/undefined는 제외
+            if (cellValue !== '' && cellValue !== 'undefined' && cellValue !== 'null') {
               item[headerKey] = cellValue;
             }
           }
