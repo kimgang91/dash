@@ -20,6 +20,7 @@ interface FilterState {
   region: string;
   md: string;
   result: string;
+  reason: string;
 }
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
@@ -38,7 +39,9 @@ export default function SalesDashboard() {
     region: '',
     md: '',
     result: '',
+    reason: '',
   });
+  const [insights, setInsights] = useState<any>(null);
 
   useEffect(() => {
     fetchData();
@@ -120,6 +123,8 @@ export default function SalesDashboard() {
       if (filters.md && item['컨택MD'] !== filters.md) return false;
       // 결과 필터
       if (filters.result && item['결과'] !== filters.result) return false;
+      // 사유 필터
+      if (filters.reason && item['사유'] !== filters.reason) return false;
       return true;
     });
   }, [data, filters, searchTerm]);
@@ -252,6 +257,11 @@ export default function SalesDashboard() {
     const resultSet = new Set(data.map((item) => item['결과']).filter(Boolean));
     return Array.from(resultSet).sort();
   }, [data]);
+
+  // 사유 옵션 (드롭다운용)
+  const reasons = useMemo(() => {
+    return ['수수료', '기능불만', '서비스불만', '현재만족', '약정기간', '기타'];
+  }, []);
 
   // AI 분석 함수 (결과, 사유, 내용 요약) - 더 디테일하게
   const analyzeData = async () => {
@@ -418,11 +428,153 @@ export default function SalesDashboard() {
     }
   };
 
+  // 내용 분석 및 인사이트 생성 함수
+  const generateInsights = useMemo(() => {
+    if (filteredData.length === 0) return null;
+
+    const contents = filteredData
+      .filter((item) => item['내용'] && item['내용'].trim())
+      .map((item) => ({
+        content: item['내용'],
+        reason: item['사유'] || '기타',
+        result: item['결과'] || '',
+        md: item['컨택MD'] || '',
+      }));
+
+    if (contents.length === 0) return null;
+
+    // 사유별 내용 분석
+    const reasonBasedAnalysis: { [key: string]: string[] } = {};
+    reasons.forEach((reason) => {
+      const reasonContents = contents.filter((c) => c.reason === reason);
+      if (reasonContents.length > 0) {
+        reasonBasedAnalysis[reason] = reasonContents.map((c) => c.content);
+      }
+    });
+
+    // 감정/반응 키워드 분석
+    const sentimentKeywords = {
+      positive: ['좋', '만족', '괜찮', '좋아', '추천', '감사', '도움', '유용', '편리'],
+      negative: ['불만', '문제', '어려', '불편', '아쉽', '부족', '개선', '불안', '걱정'],
+      neutral: ['확인', '검토', '논의', '협의', '대기', '보류', '고려'],
+    };
+
+    // 사유별 인사이트 생성
+    const insightsByReason: { [key: string]: string } = {};
+
+    reasons.forEach((reason) => {
+      const reasonContents = reasonBasedAnalysis[reason] || [];
+      if (reasonContents.length === 0) return;
+
+      const allText = reasonContents.join(' ');
+      const positiveCount = sentimentKeywords.positive.filter((kw) => allText.includes(kw)).length;
+      const negativeCount = sentimentKeywords.negative.filter((kw) => allText.includes(kw)).length;
+      const neutralCount = sentimentKeywords.neutral.filter((kw) => allText.includes(kw)).length;
+
+      // 주요 키워드 추출
+      const commonWords = ['수수료', '가격', '비용', '기능', '서비스', '시스템', '플랫폼', '약정', '계약', '조건'];
+      const foundKeywords = commonWords.filter((word) => allText.includes(word));
+
+      // 인사이트 생성 (더 정교하게)
+      let insight = '';
+      
+      // 텍스트 길이 및 내용 분석
+      const avgLength = reasonContents.reduce((sum, text) => sum + text.length, 0) / reasonContents.length;
+      const hasQuestion = allText.includes('?') || allText.includes('？');
+      const hasExclamation = allText.includes('!') || allText.includes('！');
+      
+      if (reason === '수수료') {
+        if (negativeCount > positiveCount) {
+          insight = `수수료 관련 부정적 반응이 우세합니다. 가격 정책 재검토 또는 유연한 수수료 체계(할인, 단계별 수수료 등) 제안이 필요합니다. ${foundKeywords.length > 0 ? foundKeywords[0] + ' 관련' : ''} 구체적 우려사항을 해결하면 전환 가능성이 높아집니다.`;
+        } else if (positiveCount > negativeCount) {
+          insight = `수수료에 대한 긍정적 반응이 있습니다. 현재 수수료 체계가 수용 가능한 수준으로 보이며, 추가 가치 제안으로 입점을 유도할 수 있습니다.`;
+        } else {
+          insight = `수수료 관련 논의가 진행 중입니다. 명확한 가격 제안과 ROI(투자 대비 효과)를 구체적으로 제시하면 결정에 도움이 될 것입니다.`;
+        }
+      } else if (reason === '기능불만') {
+        const featureKeywords = foundKeywords.filter(kw => ['기능', '시스템', '플랫폼'].includes(kw));
+        insight = `기능 관련 개선 요구가 ${reasonContents.length}건 확인되었습니다. ${featureKeywords.length > 0 ? featureKeywords.join(', ') + ' 관련' : '주요'} 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하면 신뢰도 향상에 도움이 됩니다.`;
+      } else if (reason === '서비스불만') {
+        insight = `서비스 품질에 대한 우려가 ${reasonContents.length}건 확인되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이는 것이 중요합니다. 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
+      } else if (reason === '현재만족') {
+        insight = `현재 서비스에 만족하고 있어 추가 제안이 어려울 수 있습니다. 장기적 관계 구축과 점진적 업셀링 전략을 고려하세요. 새로운 기능이나 혜택을 소개하는 방식으로 접근하면 효과적일 수 있습니다.`;
+      } else if (reason === '약정기간') {
+        insight = `약정 기간 관련 협의가 필요합니다. 유연한 약정 옵션(단기/중기/장기) 제공 또는 기간별 혜택 차별화(기간이 길수록 할인율 증가 등)로 합의점을 찾을 수 있습니다.`;
+      } else {
+        insight = `기타 사유로 인한 반응입니다. 개별 맞춤 접근이 필요하며, 구체적인 우려사항을 정확히 파악한 후 맞춤형 솔루션을 제시하는 것이 중요합니다.`;
+      }
+      
+      // 추가 인사이트 (질문이나 감정 표현이 있는 경우)
+      if (hasQuestion && insight) {
+        insight += ' 질문이 많다면 명확한 답변과 추가 정보 제공이 필요합니다.';
+      }
+      if (hasExclamation && negativeCount > 0) {
+        insight += ' 강한 감정 표현이 있다면 즉각적인 대응과 해결 방안 제시가 중요합니다.';
+      }
+
+      insightsByReason[reason] = insight;
+    });
+
+    // 전체 인사이트 요약 (더 구체적으로)
+    const totalContents = contents.length;
+    const positiveReactions = contents.filter((c) => {
+      const text = c.content.toLowerCase();
+      return sentimentKeywords.positive.some((kw) => text.includes(kw));
+    }).length;
+
+    const negativeReactions = contents.filter((c) => {
+      const text = c.content.toLowerCase();
+      return sentimentKeywords.negative.some((kw) => text.includes(kw));
+    }).length;
+
+    const neutralReactions = totalContents - positiveReactions - negativeReactions;
+    const positiveRate = totalContents > 0 ? ((positiveReactions / totalContents) * 100).toFixed(1) : '0';
+    const negativeRate = totalContents > 0 ? ((negativeReactions / totalContents) * 100).toFixed(1) : '0';
+
+    // 사유별 통계
+    const reasonCounts = reasons.map((reason) => ({
+      reason,
+      count: reasonBasedAnalysis[reason]?.length || 0,
+    })).filter((r) => r.count > 0).sort((a, b) => b.count - a.count);
+
+    const topReason = reasonCounts[0];
+    
+    let overallInsight = `전체 ${totalContents}건의 피드백을 분석한 결과, 긍정적 반응 ${positiveReactions}건(${positiveRate}%), 부정적 반응 ${negativeReactions}건(${negativeRate}%)입니다. `;
+    
+    if (positiveReactions > negativeReactions * 1.5) {
+      overallInsight += `전반적으로 매우 긍정적인 분위기로, 현재 영업 전략이 효과적입니다. 추가 가치 제안으로 입점 전환율을 더욱 높일 수 있는 기회가 있습니다.`;
+    } else if (positiveReactions > negativeReactions) {
+      overallInsight += `긍정적 반응이 우세합니다. 현재 접근 방식이 효과적이며, 부정적 반응을 줄이기 위한 개선사항을 반영하면 전환율이 더욱 향상될 것입니다.`;
+    } else if (negativeReactions > positiveReactions * 1.5) {
+      overallInsight += `부정적 반응이 우세합니다. ${topReason ? topReason.reason + ' 관련' : '주요'} 이슈를 우선적으로 해결하고, 명확한 개선 계획을 제시하면 신뢰 회복과 전환율 향상에 도움이 됩니다.`;
+    } else if (negativeReactions > positiveReactions) {
+      overallInsight += `부정적 반응이 다소 많습니다. ${topReason ? topReason.reason + ' 관련' : '주요'} 우려사항을 해결하고, 구체적인 해결 방안을 제시하면 전환 가능성이 높아집니다.`;
+    } else {
+      overallInsight += `반응이 혼재되어 있습니다. 개별 맞춤 접근이 효과적이며, 각 사장님의 구체적 우려사항을 파악한 후 맞춤형 솔루션을 제시하는 것이 중요합니다.`;
+    }
+    
+    if (topReason && topReason.count > totalContents * 0.3) {
+      overallInsight += ` 특히 ${topReason.reason} 관련 피드백이 ${topReason.count}건(${((topReason.count / totalContents) * 100).toFixed(1)}%)로 가장 많아 이 부분에 대한 집중 대응이 필요합니다.`;
+    }
+
+    return {
+      overallInsight,
+      insightsByReason,
+      reasonStats: reasons.map((reason) => ({
+        reason,
+        count: reasonBasedAnalysis[reason]?.length || 0,
+        insight: insightsByReason[reason] || '',
+      })),
+      totalAnalyzed: totalContents,
+    };
+  }, [filteredData, reasons]);
+
   useEffect(() => {
     if (filteredData.length > 0) {
       analyzeData();
+      setInsights(generateInsights);
     }
-  }, [filteredData]);
+  }, [filteredData, generateInsights]);
 
   if (loading) {
     return (
@@ -478,7 +630,7 @@ export default function SalesDashboard() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 지역(광역) 필터
@@ -486,7 +638,7 @@ export default function SalesDashboard() {
               <select
                 value={filters.region}
                 onChange={(e) => setFilters({ ...filters, region: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">전체 지역</option>
                 {regions.map((region) => (
@@ -503,7 +655,7 @@ export default function SalesDashboard() {
               <select
                 value={filters.md}
                 onChange={(e) => setFilters({ ...filters, md: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">전체 MD</option>
                 {mds.map((md) => (
@@ -520,12 +672,29 @@ export default function SalesDashboard() {
               <select
                 value={filters.result}
                 onChange={(e) => setFilters({ ...filters, result: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">전체 결과</option>
                 {results.map((result) => (
                   <option key={result} value={result}>
                     {result}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                사유 필터
+              </label>
+              <select
+                value={filters.reason}
+                onChange={(e) => setFilters({ ...filters, reason: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+              >
+                <option value="">전체 사유</option>
+                {reasons.map((reason) => (
+                  <option key={reason} value={reason}>
+                    {reason}
                   </option>
                 ))}
               </select>
@@ -1018,6 +1187,56 @@ export default function SalesDashboard() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* 영업 인사이트 섹션 */}
+        {insights && (
+          <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-xl sm:rounded-2xl shadow-xl p-4 sm:p-6 mb-6 sm:mb-8 border border-amber-100">
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6 flex items-center gap-2">
+              <span className="text-xl sm:text-2xl">💡</span> 영업 인사이트 (사장님 반응 분석)
+            </h2>
+            
+            {/* 전체 인사이트 */}
+            <div className="bg-white rounded-xl p-4 sm:p-5 mb-4 sm:mb-6 shadow-md border-l-4 border-amber-500">
+              <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                <span className="text-lg">📈</span> 전체 요약
+              </h3>
+              <p className="text-sm sm:text-base text-gray-700 leading-relaxed">
+                {insights.overallInsight}
+              </p>
+            </div>
+
+            {/* 사유별 인사이트 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              {insights.reasonStats
+                .filter((stat: any) => stat.count > 0)
+                .map((stat: any, index: number) => (
+                  <div key={index} className="bg-white rounded-xl p-4 sm:p-5 shadow-md hover:shadow-lg transition-shadow">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-base sm:text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <span className="text-lg">🏷️</span> {stat.reason}
+                      </h3>
+                      <span className="px-2 sm:px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs sm:text-sm font-semibold">
+                        {stat.count}건
+                      </span>
+                    </div>
+                    {stat.insight && (
+                      <p className="text-xs sm:text-sm text-gray-700 leading-relaxed line-clamp-3">
+                        {stat.insight}
+                      </p>
+                    )}
+                  </div>
+                ))}
+            </div>
+
+            {/* 분석 통계 */}
+            <div className="mt-4 sm:mt-6 pt-4 border-t border-amber-200">
+              <div className="text-xs sm:text-sm text-gray-600 flex flex-wrap gap-4">
+                <span>📊 분석된 피드백: {insights.totalAnalyzed}건</span>
+                <span>🏷️ 사유 분류: {insights.reasonStats.filter((s: any) => s.count > 0).length}개</span>
+              </div>
+            </div>
           </div>
         )}
 
