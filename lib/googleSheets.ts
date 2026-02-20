@@ -1,8 +1,11 @@
 import { google } from 'googleapis';
 
-// Private Key (JSON 파일에서 직접 복사한 값)
-// 이 값은 Vercel 환경변수에 Base64로 인코딩해서 저장하거나, 직접 사용
-const DEFAULT_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+// 서비스 계정 정보 (JSON 파일에서 직접)
+const SERVICE_ACCOUNT = {
+  type: 'service_account',
+  project_id: 'genial-retina-488004-s8',
+  private_key_id: '3903822f056926ad2d3bcf3184532ccb8ff15d26',
+  private_key: `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDlE1e221+auYtT
 KnRD92hTbacnjut43kDRitpaCkby4/1LH519p+1eUBBhaDjVEmHN8KickY3/1MEo
 +7tG+Y57RJyQUx2DNAivXxrEsN9dLDJPhbIp26QoGaxuKNUgsXfezQEuvozD55eT
@@ -29,49 +32,21 @@ v7+LqxaTlX88jmiOL8JQSf0fnA3NeBev5IuKSMUCgYEAtGOfJ7v7PI3YmpvbiFfD
 e1Xf7xryReZRubKxHYQeHROyd98KSDVuZ3jKBS8MvvWoNsviZpg7rAX9mRuvRz5s
 2O4etDd2RiZpVvIzE4jNzcqfKoVOYjfzFsqkS8oJk9E4WpQmofElS6W0DZCrEf8/
 VIQFb6N9kM6JP69NFVE57Gc=
------END PRIVATE KEY-----`;
+-----END PRIVATE KEY-----`,
+  client_email: 'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com',
+  client_id: '102732460311255439751',
+  auth_uri: 'https://accounts.google.com/o/oauth2/auth',
+  token_uri: 'https://oauth2.googleapis.com/token',
+  auth_provider_x509_cert_url: 'https://www.googleapis.com/oauth2/v1/certs',
+  client_x509_cert_url: 'https://www.googleapis.com/robot/v1/metadata/x509/dashboard%40genial-retina-488004-s8.iam.gserviceaccount.com',
+  universe_domain: 'googleapis.com'
+};
 
 // Google Sheets API 클라이언트 초기화
 function getSheetsClient() {
-  const clientEmail = 'dashboard@genial-retina-488004-s8.iam.gserviceaccount.com';
-  
-  // 환경변수에서 Private Key 읽기 시도
-  let privateKey = process.env.PRIVATE_KEY || process.env.GOOGLE_SHEETS_PRIVATE_KEY;
-  
-  // 환경변수가 없으면 기본값 사용 (개발용)
-  if (!privateKey) {
-    console.warn('환경변수 PRIVATE_KEY가 없어 기본값을 사용합니다. 프로덕션에서는 환경변수를 설정해주세요.');
-    privateKey = DEFAULT_PRIVATE_KEY;
-  } else {
-    // 환경변수에서 읽은 경우 파싱
-    privateKey = privateKey.trim();
-    
-    // 큰따옴표 제거
-    while ((privateKey.startsWith('"') && privateKey.endsWith('"')) || 
-           (privateKey.startsWith("'") && privateKey.endsWith("'"))) {
-      privateKey = privateKey.slice(1, -1).trim();
-    }
-    
-    // \n을 실제 줄바꿈으로 변환
-    privateKey = privateKey.replace(/\\n/g, '\n');
-    privateKey = privateKey.trim();
-  }
-
-  // 최종 검증
-  if (!privateKey.includes('BEGIN PRIVATE KEY') || !privateKey.includes('END PRIVATE KEY')) {
-    throw new Error(
-      `Private Key 형식이 올바르지 않습니다. ` +
-      `BEGIN PRIVATE KEY와 END PRIVATE KEY가 포함되어야 합니다. ` +
-      `현재 길이: ${privateKey.length}자`
-    );
-  }
-
-  // Google Auth 설정
+  // 서비스 계정 정보 직접 사용
   const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: clientEmail,
-      private_key: privateKey,
-    },
+    credentials: SERVICE_ACCOUNT,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
 
@@ -98,6 +73,7 @@ export async function getSalesData() {
     );
     
     const sheetName = targetSheet?.properties?.title || 'Sheet1';
+    console.log(`Using sheet: ${sheetName} (gid: ${SALES_DB_SHEET_ID})`);
     
     // 데이터 가져오기
     const response = await sheets.spreadsheets.values.get({
@@ -107,8 +83,11 @@ export async function getSalesData() {
 
     const rows = response.data.values;
     if (!rows || rows.length === 0) {
+      console.log('No rows found in spreadsheet');
       return [];
     }
+
+    console.log(`Total rows fetched: ${rows.length}`);
 
     // 헤더 찾기 (3번째 행이 헤더)
     let headerRowIndex = 2; // 기본값: 3번째 행
@@ -117,6 +96,7 @@ export async function getSalesData() {
         const rowText = rows[i].join(' ');
         if (rowText.includes('지역') || rowText.includes('컨택') || rowText.includes('결과')) {
           headerRowIndex = i;
+          console.log(`Header found at row index: ${headerRowIndex}`);
           break;
         }
       }
@@ -124,8 +104,11 @@ export async function getSalesData() {
 
     const headers = rows[headerRowIndex] as string[];
     if (!headers) {
+      console.error('Header row not found');
       return [];
     }
+
+    console.log(`Headers: ${headers.slice(0, 5).join(', ')}...`);
 
     // 컬럼 매핑 (직접 인덱스 사용)
     const columnMap: { [key: string]: number } = {
@@ -191,6 +174,7 @@ export async function getSalesData() {
       })
       .filter((item: any) => item !== null);
 
+    console.log(`Processed data items: ${data.length}`);
     return data;
   } catch (error: any) {
     console.error('Error fetching sales data:', error);
@@ -201,11 +185,15 @@ export async function getSalesData() {
     if (error.message) {
       errorMessage = error.message;
     } else if (error.code === 403) {
-      errorMessage = 'Google Sheets 접근 권한이 없습니다. 서비스 계정 이메일(dashboard@genial-retina-488004-s8.iam.gserviceaccount.com)을 Google Sheets에 공유했는지 확인해주세요.';
+      errorMessage = `Google Sheets 접근 권한이 없습니다. 
+서비스 계정 이메일(${SERVICE_ACCOUNT.client_email})을 Google Sheets에 공유했는지 확인해주세요.
+Google Sheets 문서를 열고 "공유" 버튼을 클릭하여 위 이메일을 추가하세요.`;
     } else if (error.code === 404) {
-      errorMessage = 'Google Sheets를 찾을 수 없습니다.';
+      errorMessage = 'Google Sheets를 찾을 수 없습니다. 스프레드시트 ID를 확인해주세요.';
     } else if (error.message?.includes('invalid_grant') || error.message?.includes('JWT')) {
-      errorMessage = 'Google API 인증 실패. Private Key 설정을 확인해주세요.';
+      errorMessage = `Google API 인증 실패. 
+서비스 계정이 올바르게 설정되었는지 확인해주세요.
+에러 코드: ${error.code || 'N/A'}`;
     }
     
     throw new Error(errorMessage);
