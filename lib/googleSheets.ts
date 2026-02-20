@@ -259,6 +259,12 @@ export async function getSalesData() {
       .filter((item: any) => item !== null && item['캠핑장명']);
 
     console.log(`Processed ${data.length} camping sites`);
+    
+    if (data.length === 0) {
+      console.warn('⚠️ 처리된 데이터가 없습니다. 시트 구조를 확인해주세요.');
+      throw new Error('처리된 데이터가 없습니다. 시트 구조가 변경되었을 수 있습니다.');
+    }
+    
     if (data.length > 0) {
       console.log(`Sample data (first item):`, data[0]);
       console.log(`Sample data keys:`, Object.keys(data[0]));

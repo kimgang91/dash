@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface SalesData {
@@ -28,6 +28,7 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 export default function SalesDashboard() {
   const [data, setData] = useState<SalesData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<SalesData | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAllDistricts, setShowAllDistricts] = useState(false);
@@ -50,6 +51,7 @@ export default function SalesDashboard() {
   const fetchData = async (showSuccess = false) => {
     try {
       setLoading(true);
+      setError(null); // 에러 초기화
       // 캐시 방지를 위해 타임스탬프 추가
       const timestamp = new Date().getTime();
       const response = await fetch(`/api/sales?t=${timestamp}`, {
@@ -60,24 +62,35 @@ export default function SalesDashboard() {
           'Expires': '0',
         },
       });
+      
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('API Response Error:', response.status, errorText);
         throw new Error(`HTTP error! status: ${response.status}`);
       }
+      
       const result = await response.json();
+      
       if (result.error) {
         // 상세한 에러 메시지 표시
         let errorMsg = result.error;
-        if (result.details && process.env.NODE_ENV === 'development') {
-          console.error('Error details:', result.details);
-          console.error('Env check:', result.envCheck);
-        }
+        console.error('API returned error:', errorMsg);
+        setError(errorMsg);
         throw new Error(errorMsg);
       }
-      if (result.data) {
+      
+      if (!result.data) {
+        console.error('No data in response:', result);
+        setError('데이터가 없습니다.');
+        setData([]);
+        return;
+      }
+      
+      if (Array.isArray(result.data)) {
         console.log(`📊 데이터 로드 완료: ${result.data.length}개 캠핑장`);
-        console.log(`📊 샘플 데이터:`, result.data[0]);
-        // 컬럼명 확인
         if (result.data.length > 0) {
+          console.log(`📊 샘플 데이터:`, result.data[0]);
+          // 컬럼명 확인
           const sample = result.data[0];
           console.log(`📊 컬럼명 확인:`, Object.keys(sample).slice(0, 20));
           console.log(`📊 주요 컬럼 값:`, {
@@ -89,28 +102,26 @@ export default function SalesDashboard() {
         setData(result.data);
         setLastUpdateTime(new Date());
         setRefreshKey(prev => prev + 1);
+        setError(null); // 성공 시 에러 초기화
         if (showSuccess) {
           console.log(`✅ 데이터 새로고침 완료: ${result.data.length}개 캠핑장 로드됨`);
         }
+      } else {
+        console.error('Invalid data format:', result.data);
+        setError('데이터 형식이 올바르지 않습니다.');
+        setData([]);
       }
     } catch (error: any) {
       console.error('Error fetching data:', error);
       // 더 구체적인 에러 메시지 표시
       const errorMessage = error.message || '데이터를 불러오는 중 오류가 발생했습니다.';
+      setError(errorMessage);
+      setData([]); // 에러 시 빈 배열로 설정
+      
       // 에러 메시지에 따라 다른 안내 표시
       if (errorMessage.includes('접근 권한') || errorMessage.includes('403') || errorMessage.includes('공개')) {
-        alert(
-          'Google Sheets가 공개되어 있지 않습니다.\n\n' +
-          '해결 방법:\n' +
-          '1. Google Sheets 문서를 엽니다:\n' +
-          '   https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit\n' +
-          '2. 우측 상단 "공유" 버튼 클릭\n' +
-          '3. "링크가 있는 모든 사용자" 또는 "공개"로 설정\n' +
-          '4. 권한: "보기 가능(뷰어)" 선택\n' +
-          '5. "완료" 클릭'
-        );
-      } else {
-        alert(errorMessage);
+        // 콘솔에만 표시하고 UI에는 에러 메시지 표시
+        console.error('Google Sheets 공개 설정 필요');
       }
     } finally {
       setLoading(false);
@@ -299,7 +310,7 @@ export default function SalesDashboard() {
   }, []);
 
   // AI 분석 함수 (결과, 사유, 내용 요약) - 더 디테일하게
-  const analyzeData = async () => {
+  const analyzeData = useCallback(async () => {
     try {
       setAnalyzing(true);
       
@@ -461,7 +472,7 @@ export default function SalesDashboard() {
     } finally {
       setAnalyzing(false);
     }
-  };
+  }, [filteredData]);
 
   // 내용 분석 및 인사이트 생성 함수
   const generateInsights = useMemo(() => {
@@ -701,17 +712,93 @@ export default function SalesDashboard() {
     };
   }, [filteredData, reasons]);
 
+  // AI 분석 실행
   useEffect(() => {
     if (filteredData.length > 0) {
       analyzeData();
-      setInsights(generateInsights);
+    } else {
+      setAiAnalysis(null);
+      setInsights(null);
     }
-  }, [filteredData, generateInsights]);
+  }, [filteredData, analyzeData]); // analyzeData도 의존성에 추가
+
+  // 인사이트 업데이트 (generateInsights가 변경될 때만)
+  useEffect(() => {
+    if (generateInsights) {
+      setInsights(generateInsights);
+    } else {
+      setInsights(null);
+    }
+  }, [generateInsights]);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl">데이터를 불러오는 중...</div>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="text-xl font-semibold text-gray-700">데이터를 불러오는 중...</div>
+          <div className="text-sm text-gray-500 mt-2">잠시만 기다려주세요</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-4 sm:p-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl shadow-lg p-6 sm:p-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-red-800 mb-4 flex items-center gap-2">
+              <span className="text-3xl">⚠️</span> 데이터 로드 오류
+            </h1>
+            <div className="bg-white rounded-xl p-4 sm:p-6 mb-6">
+              <p className="text-base sm:text-lg text-gray-800 mb-4 font-semibold">오류 메시지:</p>
+              <p className="text-sm sm:text-base text-gray-700 whitespace-pre-wrap break-words">{error}</p>
+            </div>
+            
+            {error.includes('공개') || error.includes('403') || error.includes('접근 권한') ? (
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 sm:p-6 mb-6">
+                <h2 className="text-lg sm:text-xl font-bold text-blue-800 mb-3">해결 방법:</h2>
+                <ol className="list-decimal list-inside space-y-2 text-sm sm:text-base text-gray-700">
+                  <li>Google Sheets 문서를 엽니다:
+                    <br />
+                    <a 
+                      href="https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-600 underline break-all"
+                    >
+                      https://docs.google.com/spreadsheets/d/1_laE9Yxj-tajY23k36z3Bg2A_Mds8_V2A81DHnrUO68/edit
+                    </a>
+                  </li>
+                  <li>우측 상단 "공유" 버튼을 클릭합니다</li>
+                  <li>"링크가 있는 모든 사용자" 또는 "공개"로 설정합니다</li>
+                  <li>권한을 "보기 가능(뷰어)"로 설정합니다</li>
+                  <li>"완료"를 클릭합니다</li>
+                </ol>
+              </div>
+            ) : null}
+            
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => fetchData(true)}
+                className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-md hover:shadow-lg font-medium text-base"
+              >
+                🔄 다시 시도
+              </button>
+              <button
+                onClick={() => {
+                  setError(null);
+                  setLoading(true);
+                  fetchData();
+                }}
+                className="px-6 py-3 bg-gray-600 text-white rounded-xl hover:bg-gray-700 transition-all shadow-md hover:shadow-lg font-medium text-base"
+              >
+                🔃 새로고침
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
