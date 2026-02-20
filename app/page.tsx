@@ -305,9 +305,9 @@ export default function SalesDashboard() {
     return Array.from(resultSet).sort();
   }, [data]);
 
-  // 사유 옵션 (드롭다운용)
+  // 사유 옵션 (드롭다운용) - L열 드롭다운과 동일
   const reasons = useMemo(() => {
-    return ['수수료', '기능불만', '서비스불만', '현재만족', '약정기간', '기타'];
+    return ['수수료', '기능', '서비스', '현재만족', '약정기간', '기타', '공사중'];
   }, []);
 
   // AI 분석 함수 (결과, 사유, 내용 요약) - 더 디테일하게
@@ -361,8 +361,9 @@ export default function SalesDashboard() {
         }
       });
 
-      // 결과 요약 (더 상세)
+      // 결과 요약 (더 상세) - 기존입점 제외
       const resultSummary = Object.entries(resultStats)
+        .filter(([result]) => !result.includes('기존입점') && result.trim() !== '') // 기존입점 제외
         .sort((a, b) => b[1] - a[1])
         .map(([result, count]) => ({
           result,
@@ -371,31 +372,41 @@ export default function SalesDashboard() {
           trend: 'stable', // 추후 개선 가능
         }));
 
-      // 사유 분석 (더 상세)
+      // 사유 분석 (더 상세) - L열 드롭다운과 동일한 카테고리
       const reasonMap: { [key: string]: number } = {};
       const reasonCategories: { [category: string]: number } = {
-        '가격': 0,
-        '조건': 0,
-        '시설': 0,
-        '위치': 0,
+        '수수료': 0,
+        '기능': 0,
+        '서비스': 0,
+        '현재만족': 0,
+        '약정기간': 0,
         '기타': 0,
+        '공사중': 0,
       };
       
-      reasons.forEach((reason) => {
-        reasonMap[reason] = (reasonMap[reason] || 0) + 1;
-        
-        // 카테고리 분류
-        const reasonLower = reason.toLowerCase();
-        if (reasonLower.includes('가격') || reasonLower.includes('비용') || reasonLower.includes('요금')) {
-          reasonCategories['가격']++;
-        } else if (reasonLower.includes('조건') || reasonLower.includes('계약')) {
-          reasonCategories['조건']++;
-        } else if (reasonLower.includes('시설') || reasonLower.includes('환경')) {
-          reasonCategories['시설']++;
-        } else if (reasonLower.includes('위치') || reasonLower.includes('접근')) {
-          reasonCategories['위치']++;
-        } else {
-          reasonCategories['기타']++;
+      // 실제 데이터에서 사유 수집 및 카테고리 분류
+      filteredData.forEach((item) => {
+        const reason = item['사유']?.trim();
+        if (reason && reason !== '') {
+          reasonMap[reason] = (reasonMap[reason] || 0) + 1;
+          
+          // 카테고리 분류 (L열 드롭다운 기준)
+          const reasonLower = reason.toLowerCase();
+          if (reasonLower.includes('수수료') || reasonLower.includes('가격') || reasonLower.includes('비용') || reasonLower.includes('요금')) {
+            reasonCategories['수수료']++;
+          } else if (reasonLower.includes('기능') || reasonLower.includes('기능불만')) {
+            reasonCategories['기능']++;
+          } else if (reasonLower.includes('서비스') || reasonLower.includes('서비스불만')) {
+            reasonCategories['서비스']++;
+          } else if (reasonLower.includes('현재만족') || reasonLower.includes('만족')) {
+            reasonCategories['현재만족']++;
+          } else if (reasonLower.includes('약정') || reasonLower.includes('기간')) {
+            reasonCategories['약정기간']++;
+          } else if (reasonLower.includes('공사') || reasonLower.includes('공사중')) {
+            reasonCategories['공사중']++;
+          } else {
+            reasonCategories['기타']++;
+          }
         }
       });
       
@@ -618,10 +629,12 @@ export default function SalesDashboard() {
         // 부정적 결과
         if (reason === '수수료') {
           insight = `수수료 관련 부정적 반응으로 인해 거절되었습니다. 가격 정책 재검토 또는 유연한 수수료 체계(할인, 단계별 수수료 등) 제안이 필요합니다. 구체적 우려사항을 해결하면 재검토 기회를 만들 수 있습니다.`;
-        } else if (reason === '기능불만') {
+        } else if (reason === '기능' || reason === '기능불만') {
           insight = `기능 관련 개선 요구로 인해 거절되었습니다. 주요 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하여 신뢰도를 높이는 것이 중요합니다.`;
-        } else if (reason === '서비스불만') {
+        } else if (reason === '서비스' || reason === '서비스불만') {
           insight = `서비스 품질에 대한 우려로 인해 거절되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이고, 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
+        } else if (reason === '공사중') {
+          insight = `공사 중으로 인해 당장 입점하지 못하는 상황입니다. 공사 완료 일정을 확인하고, 완료 후 입점 절차를 안내하면 전환 가능성이 높습니다.`;
         } else {
           insight = `${reason} 관련 이슈로 인해 거절되었습니다. 구체적인 우려사항을 파악하고 맞춤형 해결 방안을 제시하면 재검토 가능성이 있습니다.`;
         }
@@ -635,15 +648,30 @@ export default function SalesDashboard() {
           } else {
             insight = `수수료 관련 논의가 진행 중입니다. 명확한 가격 제안과 ROI(투자 대비 효과)를 구체적으로 제시하면 결정에 도움이 될 것입니다.`;
           }
-        } else if (reason === '기능불만') {
+        } else if (reason === '기능' || reason === '기능불만') {
           const featureKeywords = foundKeywords.filter(kw => ['기능', '시스템', '플랫폼'].includes(kw));
           insight = `기능 관련 개선 요구가 ${reasonContents.length}건 확인되었습니다. ${featureKeywords.length > 0 ? featureKeywords.join(', ') + ' 관련' : '주요'} 기능 개선사항을 우선적으로 반영하거나, 개발 로드맵을 공유하면 신뢰도 향상에 도움이 됩니다.`;
-        } else if (reason === '서비스불만') {
+        } else if (reason === '서비스' || reason === '서비스불만') {
           insight = `서비스 품질에 대한 우려가 ${reasonContents.length}건 확인되었습니다. 고객 지원 강화, 응대 시간 단축, 전문성 향상 등을 통해 신뢰도를 높이는 것이 중요합니다. 개선 계획을 구체적으로 제시하면 재검토 기회를 만들 수 있습니다.`;
         } else if (reason === '현재만족') {
           insight = `현재 서비스에 만족하고 있어 추가 제안이 어려울 수 있습니다. 장기적 관계 구축과 점진적 업셀링 전략을 고려하세요. 새로운 기능이나 혜택을 소개하는 방식으로 접근하면 효과적일 수 있습니다.`;
         } else if (reason === '약정기간') {
           insight = `약정 기간 관련 협의가 필요합니다. 유연한 약정 옵션(단기/중기/장기) 제공 또는 기간별 혜택 차별화(기간이 길수록 할인율 증가 등)로 합의점을 찾을 수 있습니다.`;
+        } else if (reason === '공사중') {
+          // 공사중은 검토 중 + 일정이 있는 경우와 유사하게 처리
+          if (hasTimeline && !hasNegativeResult) {
+            const timelinePattern = /(\d+월\s*(초|중|말|말경)?|월\s*(초|중|말)|내년|다음\s*달|곧|조만간|준비\s*중|공사\s*중|작업\s*중|진행\s*중|입점\s*예정|오픈\s*예정)/g;
+            const timelineMatches = allText.match(timelinePattern);
+            const timelineText = timelineMatches ? [...new Set(timelineMatches)].join(', ') : '';
+            
+            if (timelineText) {
+              insight = `공사 중이며, 내용상 일정/준비 관련 언급(${timelineText})이 있어 입점 가능성이 높아 보입니다. 공사 완료 일정(${timelineText})을 확인하고, 완료 후 입점 절차를 안내하면 전환 가능성이 높습니다.`;
+            } else {
+              insight = `공사 중으로 인해 당장 입점하지 못하는 상황입니다. 공사 완료 일정을 확인하고, 완료 후 입점 절차를 안내하면 전환 가능성이 높습니다.`;
+            }
+          } else {
+            insight = `공사 중으로 인해 당장 입점하지 못하는 상황입니다. 공사 완료 일정을 확인하고, 완료 후 입점 절차를 안내하면 전환 가능성이 높습니다.`;
+          }
         } else {
           // 기타 사유 - 내용 분석 강화
           if (hasTimeline && !hasNegativeResult) {
